@@ -139,6 +139,50 @@ REMOTE
 }
 
 # ----------------------------------------------------------------------------
+# Helper: snapshot per-run metrics from service-a on VM 0.
+# Must be called while service-a is still running (before stop_service_a).
+# Saves raw .prom file and writes a human-readable metrics-summary.txt.
+# Because service-a restarts fresh each scenario, counters start at 0 every
+# run — no diffing needed.
+# ----------------------------------------------------------------------------
+snapshot_metrics() {
+    local RUN_DIR="$1"
+    local prom="${RUN_DIR}/service-a-metrics.prom"
+
+    vm_a curl -sf --max-time 5 "http://localhost:2112/metrics" > "${prom}" 2>/dev/null || {
+        log "  WARNING: could not fetch service-a metrics — is service-a still running?"
+        return
+    }
+
+    # Human-readable per-run summary
+    {
+        grep '^service_a_messages_sent_total{' "${prom}" | \
+            sed 's/service_a_messages_sent_total{addr="\([^"]*\)"} \(.*\)/  sent          \1  \2/'
+        grep '^service_a_messages_lost_total{' "${prom}" | \
+            sed 's/service_a_messages_lost_total{addr="\([^"]*\)",reason="\([^"]*\)"} \(.*\)/  lost\/\2       \1  \3/'
+        if grep -q '^service_a_messages_rerouted_total{' "${prom}"; then
+            grep '^service_a_messages_rerouted_total{' "${prom}" | \
+                sed 's/service_a_messages_rerouted_total{skipped_addr="\([^"]*\)"} \(.*\)/  rerouted      \1  \2/'
+        else
+            echo "  rerouted      (none — baseline mode or no degraded streams)"
+        fi
+        local dropped
+        dropped=$(grep '^service_a_messages_dropped_total ' "${prom}" | awk '{print $NF+0}')
+        printf "  dropped       (all streams down)  %d\n" "${dropped:-0}"
+        grep '^service_a_reroutes_total{' "${prom}" | \
+            sed 's/service_a_reroutes_total{addr="\([^"]*\)",reason="\([^"]*\)"} \(.*\)/  transition    \1  [\2]  \3/'
+    } > "${RUN_DIR}/metrics-summary.txt"
+
+    # Log totals inline so they appear in experiment.log
+    local sent lost rerouted dropped
+    sent=$(grep '^service_a_messages_sent_total{' "${prom}" | awk '{sum+=$NF} END {print sum+0}')
+    lost=$(grep '^service_a_messages_lost_total{' "${prom}" | awk '{sum+=$NF} END {print sum+0}')
+    rerouted=$(grep '^service_a_messages_rerouted_total{' "${prom}" | awk '{sum+=$NF} END {print sum+0}')
+    dropped=$(grep '^service_a_messages_dropped_total ' "${prom}" | awk '{print $NF+0}')
+    log "  metrics: sent=${sent} lost=${lost} rerouted=${rerouted} dropped=${dropped:-0}"
+}
+
+# ----------------------------------------------------------------------------
 # Helper: run a timed fault scenario
 # ----------------------------------------------------------------------------
 run_scenario() {
@@ -179,6 +223,7 @@ run_scenario() {
     sleep 20
 
     log "t=60: stopping"
+    snapshot_metrics "${RUN_DIR}"
     stop_service_a "${RUN_DIR}/service-a.log"
     log "Run complete. Logs: ${RUN_DIR}/service-a.log"
 }
@@ -217,3 +262,22 @@ run_scenario "run5-disconnect" "ebpf" "${VM2}" "--mode disconnect"
 log ""
 log "=== All runs complete. Results in: ${RESULTS_DIR} ==="
 log "Run ./scripts/collect-results.sh to gather Prometheus metrics."
+
+# Print a comparison table across all runs
+log ""
+log "=== Per-run metrics summary ==="
+printf "%-35s %8s %8s %10s %8s\n" "run" "sent" "lost" "rerouted" "dropped" | \
+    tee -a "${RESULTS_DIR}/experiment.log"
+printf "%-35s %8s %8s %10s %8s\n" "---" "----" "----" "--------" "-------" | \
+    tee -a "${RESULTS_DIR}/experiment.log"
+for prom in "${RESULTS_DIR}"/*/service-a-metrics.prom; do
+    [[ -f "${prom}" ]] || continue
+    run=$(basename "$(dirname "${prom}")")
+    sent=$(grep '^service_a_messages_sent_total{'     "${prom}" | awk '{sum+=$NF} END {print sum+0}')
+    lost=$(grep '^service_a_messages_lost_total{'     "${prom}" | awk '{sum+=$NF} END {print sum+0}')
+    rerouted=$(grep '^service_a_messages_rerouted_total{' "${prom}" | awk '{sum+=$NF} END {print sum+0}')
+    dropped=$(grep '^service_a_messages_dropped_total '   "${prom}" | awk '{print $NF+0}')
+    printf "%-35s %8d %8d %10d %8d\n" \
+        "${run}" "${sent}" "${lost}" "${rerouted}" "${dropped:-0}" | \
+        tee -a "${RESULTS_DIR}/experiment.log"
+done
