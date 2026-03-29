@@ -81,7 +81,9 @@ write_files:
 
 runcmd:
   # Create directories for binaries and certs
+  # /etc/service-a is owned by ubuntu so scp works without sudo (same fix as /etc/nginx/certs)
   - mkdir -p /usr/local/bin /etc/service-a
+  - chown ubuntu:ubuntu /etc/service-a
 
   # Open SSH before enabling ufw — without this, enabling ufw drops port 22
   # and all subsequent SSH/SCP connections hang indefinitely.

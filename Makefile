@@ -4,7 +4,7 @@ SHELL := /bin/bash
         test deploy-a deploy-agent deploy-b deploy-certs experiment docker-build clean
 
 BINARY_DIR := bin
-GO         := go
+GO         := $(shell command -v go 2>/dev/null || echo go)
 
 # Overridable at the command line
 VM_A     ?=                          # service-a VM IP, e.g. 192.168.122.9
@@ -33,6 +33,10 @@ all: build
 # Build dependencies — run on Linux (VM 0) before make generate / make build
 # ----------------------------------------------------------------------------
 deps:
+	@command -v go >/dev/null 2>&1 || { \
+		echo "Go not found — installing via snap..."; \
+		sudo snap install go --classic; \
+	}
 	sudo apt-get install -y \
 		clang llvm libbpf-dev linux-headers-$(shell uname -r) \
 		build-essential libelf-dev zlib1g-dev protobuf-compiler \
@@ -158,21 +162,21 @@ test:
 deploy-a: build-linux-go
 	@[ -n "$(VM_A)" ] || (echo "ERROR: VM_A is required, e.g. VM_A=192.168.122.9"; exit 1)
 	echo "Deploying service-a to $(VM_A)..."
-	scp $(BINARY_DIR)/linux/service-a $(SSH_USER)@$(VM_A):/usr/local/bin/service-a
-	ssh $(SSH_USER)@$(VM_A) "sudo systemctl restart service-a"
+	scp $(BINARY_DIR)/linux/service-a $(SSH_USER)@$(VM_A):~/service-a
+	ssh $(SSH_USER)@$(VM_A) "sudo mv ~/service-a /usr/local/bin/service-a && sudo chmod 755 /usr/local/bin/service-a && sudo systemctl restart service-a"
 
 deploy-agent: build-linux-agent
 	@[ -n "$(VM_A)" ] || (echo "ERROR: VM_A is required, e.g. VM_A=192.168.122.9"; exit 1)
 	echo "Deploying ebpf-agent to $(VM_A)..."
-	scp $(BINARY_DIR)/linux/ebpf-agent $(SSH_USER)@$(VM_A):/usr/local/bin/ebpf-agent
-	ssh $(SSH_USER)@$(VM_A) "sudo systemctl restart ebpf-agent"
+	scp $(BINARY_DIR)/linux/ebpf-agent $(SSH_USER)@$(VM_A):~/ebpf-agent
+	ssh $(SSH_USER)@$(VM_A) "sudo mv ~/ebpf-agent /usr/local/bin/ebpf-agent && sudo chmod 755 /usr/local/bin/ebpf-agent && sudo systemctl restart ebpf-agent"
 
 deploy-b: build-linux-go
 	@[ -n "$(VMS)" ] || (echo "ERROR: VMS is required, e.g. VMS=\"192.168.122.10 192.168.122.11\""; exit 1)
 	@for vm in $(VMS); do \
 		echo "Deploying service-b to $$vm..."; \
-		scp $(BINARY_DIR)/linux/service-b $(SSH_USER)@$$vm:/usr/local/bin/service-b; \
-		ssh $(SSH_USER)@$$vm "sudo systemctl restart service-b"; \
+		scp $(BINARY_DIR)/linux/service-b $(SSH_USER)@$$vm:~/service-b; \
+		ssh $(SSH_USER)@$$vm "sudo mv ~/service-b /usr/local/bin/service-b && sudo chmod 755 /usr/local/bin/service-b && sudo systemctl restart service-b"; \
 	done
 
 # Deploy TLS certs to service-b VMs.
