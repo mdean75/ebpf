@@ -271,6 +271,18 @@ run_scenario "run5-packetloss" "ebpf" "${VM2}" "--mode packet-loss --rate 5"
 run_scenario "run5-latency"    "ebpf" "${VM2}" "--mode latency --delay 200ms --jitter 50ms"
 run_scenario "run5-disconnect" "ebpf" "${VM2}" "--mode disconnect"
 
+# ----------------------------------------------------------------------------
+# Run 6 — Heavy packet loss (30%) on VM1
+#
+# At 5% loss TCP retransmits recover within the 3s lossDeadline so no
+# messages are counted as lost in baseline. At 30%, three consecutive drops
+# (p≈2.7%) exhaust TCP's retransmit budget (~3s of exponential backoff) and
+# produce observable lost/timeout events. Baseline absorbs these silently;
+# eBPF detects and reroutes within ~500ms, reducing the loss window.
+# ----------------------------------------------------------------------------
+run_scenario "run6-packetloss-heavy" "baseline" "${VM1}" "--mode packet-loss --rate 30"
+run_scenario "run6-packetloss-heavy" "ebpf"     "${VM1}" "--mode packet-loss --rate 30"
+
 log ""
 log "=== All runs complete. Results in: ${RESULTS_DIR} ==="
 log "Run ./scripts/collect-results.sh to gather Prometheus metrics."

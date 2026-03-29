@@ -88,10 +88,17 @@ func loadConfig() loader.Config {
 			mult = uint16(n)
 		}
 	}
+	thresh := uint16(5)
+	if v := os.Getenv("UNACKED_THRESHOLD"); v != "" {
+		if n, err := strconv.ParseUint(v, 10, 16); err == nil {
+			thresh = uint16(n)
+		}
+	}
 	return loader.Config{
-		TargetPort:    port,
-		RTTMultiplier: mult,
-		CgroupPath:    detectCgroupPath(),
+		TargetPort:       port,
+		RTTMultiplier:    mult,
+		UnackedThreshold: thresh,
+		CgroupPath:       detectCgroupPath(),
 	}
 }
 

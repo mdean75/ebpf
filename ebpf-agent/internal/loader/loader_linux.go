@@ -20,6 +20,7 @@ type Programs struct {
 	retransmitObjs RetransmitObjects
 	rttObjs        RttObjects
 	sockopsObjs    SockopsObjects
+	unackedObjs    UnackedObjects
 
 	links []link.Link
 	rb    *ringbuf.Reader
@@ -31,6 +32,11 @@ type Config struct {
 	TargetPort uint16
 	// RTTMultiplier is the spike detection threshold. Default 3.
 	RTTMultiplier uint16
+	// UnackedThreshold is the tcp_sock.packets_out value at which an
+	// EVENT_UNACKED is emitted. On a healthy LAN connection packets_out is
+	// 0–1; a threshold of 5 detects a black hole in ~25 ms at 200 msg/s.
+	// Default 5.
+	UnackedThreshold uint16
 	// CgroupPath is the cgroupv2 root. Default "/sys/fs/cgroup".
 	CgroupPath string
 }
@@ -38,6 +44,9 @@ type Config struct {
 func (c *Config) setDefaults() {
 	if c.RTTMultiplier == 0 {
 		c.RTTMultiplier = 3
+	}
+	if c.UnackedThreshold == 0 {
+		c.UnackedThreshold = 5
 	}
 	if c.CgroupPath == "" {
 		c.CgroupPath = "/sys/fs/cgroup"
@@ -118,8 +127,31 @@ func Load(cfg Config) (*Programs, error) {
 	p.links = append(p.links, so)
 	log.Println("eBPF: sockops attached to cgroup", cfg.CgroupPath)
 
+	// --- unacked.c ---
+	if err := LoadUnackedObjects(&p.unackedObjs, nil); err != nil {
+		p.Close()
+		return nil, fmt.Errorf("load unacked: %w", err)
+	}
+	if err := setPortFilter(p.unackedObjs.PortConfig, cfg.TargetPort); err != nil {
+		p.Close()
+		return nil, fmt.Errorf("set unacked port filter: %w", err)
+	}
+	if err := setUnackedThreshold(p.unackedObjs.PortConfig, cfg.UnackedThreshold); err != nil {
+		p.Close()
+		return nil, fmt.Errorf("set unacked threshold: %w", err)
+	}
+	uf, err := link.AttachTracing(link.TracingOptions{
+		Program: p.unackedObjs.TcpSendmsgUnacked,
+	})
+	if err != nil {
+		p.Close()
+		return nil, fmt.Errorf("attach unacked fentry: %w (check /sys/kernel/btf/vmlinux exists)", err)
+	}
+	p.links = append(p.links, uf)
+	log.Printf("eBPF: unacked fentry attached (threshold=%d packets)", cfg.UnackedThreshold)
+
 	// Open ring buffer reader on the retransmit program's ring buffer.
-	// (All three programs emit to their own ring buffers; we read from each.)
+	// (All four programs emit to their own ring buffers; we read from each.)
 	rb, err := ringbuf.NewReader(p.retransmitObjs.Events)
 	if err != nil {
 		p.Close()
@@ -144,6 +176,11 @@ func (p *Programs) SockopsRingBuffer() (*ringbuf.Reader, error) {
 	return ringbuf.NewReader(p.sockopsObjs.Events)
 }
 
+// UnackedRingBuffer returns the ring buffer for unacked events.
+func (p *Programs) UnackedRingBuffer() (*ringbuf.Reader, error) {
+	return ringbuf.NewReader(p.unackedObjs.Events)
+}
+
 func (p *Programs) Close() {
 	for _, l := range p.links {
 		l.Close()
@@ -154,6 +191,7 @@ func (p *Programs) Close() {
 	p.retransmitObjs.Close()
 	p.rttObjs.Close()
 	p.sockopsObjs.Close()
+	p.unackedObjs.Close()
 }
 
 // setPortFilter writes the target port (network byte order) to config map key 0.
@@ -167,6 +205,14 @@ func setPortFilter(configMap *ebpf.Map, port uint16) error {
 func setRTTMultiplier(configMap *ebpf.Map, multiplier uint16) error {
 	key := uint32(1)
 	val := multiplier
+	return configMap.Put(&key, &val)
+}
+
+// setUnackedThreshold writes the packets_out threshold to config map key 1
+// of the unacked program's config map (CFG_KEY_UNACKED_THRESHOLD = 1).
+func setUnackedThreshold(configMap *ebpf.Map, threshold uint16) error {
+	key := uint32(1)
+	val := threshold
 	return configMap.Put(&key, &val)
 }
 

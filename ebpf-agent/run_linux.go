@@ -26,6 +26,12 @@ func startRingBufferReaders(progs *loader.Programs, t *tracker.Tracker) {
 		log.Fatalf("sockops ring buffer: %v", err)
 	}
 	go readRingBuffer(soRB, t)
+
+	unackedRB, err := progs.UnackedRingBuffer()
+	if err != nil {
+		log.Fatalf("unacked ring buffer: %v", err)
+	}
+	go readRingBuffer(unackedRB, t)
 }
 
 func readRingBuffer(rb *ringbuf.Reader, t *tracker.Tracker) {
@@ -50,6 +56,8 @@ func readRingBuffer(rb *ringbuf.Reader, t *tracker.Tracker) {
 			agentmetrics.RTOTotal.WithLabelValues(labels...).Inc()
 		case tracker.EventRTTSpike:
 			agentmetrics.RTTSpikeTotal.WithLabelValues(labels...).Inc()
+		case tracker.EventUnacked:
+			agentmetrics.UnackedTotal.WithLabelValues(labels...).Inc()
 		}
 	}
 }

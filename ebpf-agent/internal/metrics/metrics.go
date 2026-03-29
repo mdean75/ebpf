@@ -21,6 +21,11 @@ var (
 		Help: "Total RTT spike events observed per connection.",
 	}, []string{"saddr", "daddr", "dport"})
 
+	UnackedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "ebpf_unacked_total",
+		Help: "Total unacked-threshold-crossing events per connection (each count is one black-hole detection).",
+	}, []string{"saddr", "daddr", "dport"})
+
 	ConnectionScore = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "ebpf_connection_score",
 		Help: "Current health score per connection (0=healthy, 1=dead).",

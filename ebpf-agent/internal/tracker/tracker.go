@@ -16,6 +16,7 @@ const (
 	EventRetransmit EventType = 1
 	EventRTO        EventType = 2
 	EventRTTSpike   EventType = 3
+	EventUnacked    EventType = 4
 )
 
 // ConnKey is the Go equivalent of struct conn_key in common.h.
@@ -83,6 +84,7 @@ type Tracker struct {
 	retransmitWeight float64 // added per retransmit event
 	rtoWeight        float64 // added per RTO event
 	rttSpikeWeight   float64 // added per RTT spike event
+	unackedWeight    float64 // added per unacked threshold crossing
 
 	lastDecay time.Time
 }
@@ -91,12 +93,16 @@ type Tracker struct {
 //   - retransmit: +0.1
 //   - RTO: +0.3
 //   - RTT spike: +0.1
+//   - unacked threshold crossing: +0.6 (single event immediately crosses the
+//     0.5 degraded threshold — the BPF program fires at most once per crossing
+//     so this weight is intentionally high)
 func New() *Tracker {
 	return &Tracker{
 		conns:            make(map[ConnKey]*ConnectionHealth),
 		retransmitWeight: 0.1,
 		rtoWeight:        0.3,
 		rttSpikeWeight:   0.1,
+		unackedWeight:    0.6,
 		lastDecay:        time.Now(),
 	}
 }
@@ -120,6 +126,8 @@ func (t *Tracker) Record(ev ConnEvent) {
 	case EventRTTSpike:
 		h.RTTSpikeCount++
 		h.Score = clamp(h.Score+t.rttSpikeWeight, 0, 1)
+	case EventUnacked:
+		h.Score = clamp(h.Score+t.unackedWeight, 0, 1)
 	}
 	// Hysteresis: enter degraded at >0.5, only exit at <0.25 (in Decay).
 	if !h.Degraded && h.Score > 0.5 {

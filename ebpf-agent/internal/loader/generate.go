@@ -18,3 +18,4 @@ package loader
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" Retransmit ../../bpf/retransmit.c -- -I../../bpf/headers $BPF_EXTRA_INCLUDES
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" Rtt ../../bpf/rtt.c -- -I../../bpf/headers $BPF_EXTRA_INCLUDES
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" Sockops ../../bpf/sockops.c -- -I../../bpf/headers $BPF_EXTRA_INCLUDES
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall -Werror" Unacked ../../bpf/unacked.c -- -I../../bpf/headers $BPF_EXTRA_INCLUDES

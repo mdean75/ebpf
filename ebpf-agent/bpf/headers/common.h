@@ -29,6 +29,7 @@ struct conn_event {
 #define EVENT_RETRANSMIT 1
 #define EVENT_RTO        2
 #define EVENT_RTT_SPIKE  3
+#define EVENT_UNACKED    4
 
 /* BPF config map key — written by the Go loader at startup */
 #define CFG_KEY_TARGET_PORT 0

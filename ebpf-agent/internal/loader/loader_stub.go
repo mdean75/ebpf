@@ -8,9 +8,10 @@ import "fmt"
 
 type Programs struct{}
 type Config struct {
-	TargetPort    uint16
-	RTTMultiplier uint16
-	CgroupPath    string
+	TargetPort       uint16
+	RTTMultiplier    uint16
+	UnackedThreshold uint16
+	CgroupPath       string
 }
 
 func Load(_ Config) (*Programs, error) {
