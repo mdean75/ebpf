@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .PHONY: all deps deps-mac proto generate vmlinux vmlinux-docker \
         build build-go build-agent build-linux build-linux-go build-linux-agent \
-        test deploy-a deploy-agent deploy-b deploy-ca-cert deploy-certs experiment docker-build clean
+        test deploy-a deploy-agent deploy-b deploy-ca-cert deploy-certs setup-ssh experiment docker-build clean
 
 BINARY_DIR := bin
 GO         := $(shell command -v go 2>/dev/null || echo go)
@@ -11,6 +11,8 @@ VM_A     ?=                          # service-a VM IP, e.g. 192.168.122.9
 VMS      ?=                          # service-b VM IPs, e.g. "192.168.122.10 192.168.122.11"
 BRIDGE   ?= virbr0                   # KVM host bridge interface
 SSH_USER ?= ubuntu
+SSH_KEY  ?= $(HOME)/.ssh/id_ebpf
+SSH_OPTS  = -i $(SSH_KEY) -o StrictHostKeyChecking=no -o BatchMode=yes
 
 # ----------------------------------------------------------------------------
 # Platform detection — sets BPF_CLANG and BPF_EXTRA_INCLUDES automatically.
@@ -155,6 +157,26 @@ test:
 	$(GO) test ./ebpf-agent/internal/tracker/...
 
 # ----------------------------------------------------------------------------
+# SSH key setup — run once before deploying or running the experiment.
+# Generates ~/.ssh/id_ebpf if it doesn't exist, then distributes it to all VMs.
+# New VMs provisioned after 'make setup-ssh' get the key injected automatically
+# via provision.sh; existing VMs need this target run against them.
+# Usage: make setup-ssh VM_A=192.168.122.9 VMS="192.168.122.10 192.168.122.11"
+# ----------------------------------------------------------------------------
+setup-ssh:
+	@if [ ! -f "$(SSH_KEY)" ]; then \
+		echo "Generating SSH key at $(SSH_KEY)..."; \
+		ssh-keygen -t ed25519 -f "$(SSH_KEY)" -N ""; \
+	else \
+		echo "SSH key already exists: $(SSH_KEY)"; \
+	fi
+	@for vm in $(VM_A) $(VMS); do \
+		[ -n "$$vm" ] || continue; \
+		echo "Copying key to $(SSH_USER)@$$vm..."; \
+		ssh-copy-id -i "$(SSH_KEY)" "$(SSH_USER)@$$vm"; \
+	done
+
+# ----------------------------------------------------------------------------
 # Deploy — copies pre-built Linux binaries to VMs and restarts systemd units.
 # Cross-compile first: make build-linux (or make build-linux-go / build-linux-agent)
 # Usage: make deploy-a VM_A=192.168.122.9
@@ -162,42 +184,42 @@ test:
 deploy-a: build-linux-go
 	@[ -n "$(VM_A)" ] || (echo "ERROR: VM_A is required, e.g. VM_A=192.168.122.9"; exit 1)
 	echo "Deploying service-a to $(VM_A)..."
-	scp $(BINARY_DIR)/linux/service-a $(SSH_USER)@$(VM_A):~/service-a
-	ssh $(SSH_USER)@$(VM_A) "sudo mv ~/service-a /usr/local/bin/service-a && sudo chmod 755 /usr/local/bin/service-a && sudo systemctl restart service-a"
+	scp $(SSH_OPTS) $(BINARY_DIR)/linux/service-a $(SSH_USER)@$(VM_A):~/service-a
+	ssh $(SSH_OPTS) $(SSH_USER)@$(VM_A) "sudo mv ~/service-a /usr/local/bin/service-a && sudo chmod 755 /usr/local/bin/service-a && sudo systemctl restart service-a"
 
 deploy-agent: build-linux-agent
 	@[ -n "$(VM_A)" ] || (echo "ERROR: VM_A is required, e.g. VM_A=192.168.122.9"; exit 1)
 	echo "Deploying ebpf-agent to $(VM_A)..."
-	scp $(BINARY_DIR)/linux/ebpf-agent $(SSH_USER)@$(VM_A):~/ebpf-agent
-	ssh $(SSH_USER)@$(VM_A) "sudo mv ~/ebpf-agent /usr/local/bin/ebpf-agent && sudo chmod 755 /usr/local/bin/ebpf-agent && sudo systemctl restart ebpf-agent"
+	scp $(SSH_OPTS) $(BINARY_DIR)/linux/ebpf-agent $(SSH_USER)@$(VM_A):~/ebpf-agent
+	ssh $(SSH_OPTS) $(SSH_USER)@$(VM_A) "sudo mv ~/ebpf-agent /usr/local/bin/ebpf-agent && sudo chmod 755 /usr/local/bin/ebpf-agent && sudo systemctl restart ebpf-agent"
 
 deploy-b: build-linux-go
 	@[ -n "$(VMS)" ] || (echo "ERROR: VMS is required, e.g. VMS=\"192.168.122.10 192.168.122.11\""; exit 1)
 	@for vm in $(VMS); do \
 		echo "Deploying service-b to $$vm..."; \
-		scp $(BINARY_DIR)/linux/service-b $(SSH_USER)@$$vm:~/service-b; \
-		ssh $(SSH_USER)@$$vm "sudo mv ~/service-b /usr/local/bin/service-b && sudo chmod 755 /usr/local/bin/service-b && sudo systemctl restart service-b"; \
+		scp $(SSH_OPTS) $(BINARY_DIR)/linux/service-b $(SSH_USER)@$$vm:~/service-b; \
+		ssh $(SSH_OPTS) $(SSH_USER)@$$vm "sudo mv ~/service-b /usr/local/bin/service-b && sudo chmod 755 /usr/local/bin/service-b && sudo systemctl restart service-b"; \
 	done
 
-# Deploy TLS certs to service-b VMs.
-# /etc/nginx/certs/ is root-owned, so we scp to ~/ then sudo mv into place.
-# Usage: make deploy-certs VMS="192.168.122.10 192.168.122.11"
 # Deploy CA cert to service-a VM.
 # /etc/service-a/ is root-owned, so we scp to ~/ then sudo mv into place.
 # Usage: make deploy-ca-cert VM_A=192.168.122.9
 deploy-ca-cert:
 	@[ -n "$(VM_A)" ] || (echo "ERROR: VM_A is required"; exit 1)
 	@[ -f certs/ca.crt ] || (echo "ERROR: certs/ca.crt not found — run ./certs/gen-certs.sh first"; exit 1)
-	scp certs/ca.crt $(SSH_USER)@$(VM_A):~/ca.crt
-	ssh $(SSH_USER)@$(VM_A) "sudo mkdir -p /etc/service-a && sudo mv ~/ca.crt /etc/service-a/ca.crt && sudo chmod 644 /etc/service-a/ca.crt"
+	scp $(SSH_OPTS) certs/ca.crt $(SSH_USER)@$(VM_A):~/ca.crt
+	ssh $(SSH_OPTS) $(SSH_USER)@$(VM_A) "sudo mkdir -p /etc/service-a && sudo mv ~/ca.crt /etc/service-a/ca.crt && sudo chmod 644 /etc/service-a/ca.crt"
 
+# Deploy TLS certs to service-b VMs.
+# /etc/nginx/certs/ is root-owned, so we scp to ~/ then sudo mv into place.
+# Usage: make deploy-certs VMS="192.168.122.10 192.168.122.11"
 deploy-certs:
 	@[ -n "$(VMS)" ] || (echo "ERROR: VMS is required, e.g. VMS=\"192.168.122.10 192.168.122.11\""; exit 1)
 	@for vm in $(VMS); do \
 		echo "Deploying certs to $$vm..."; \
-		scp certs/$$vm/server.crt $(SSH_USER)@$$vm:~/server.crt; \
-		scp certs/$$vm/server.key $(SSH_USER)@$$vm:~/server.key; \
-		ssh $(SSH_USER)@$$vm "sudo mkdir -p /etc/nginx/certs \
+		scp $(SSH_OPTS) certs/$$vm/server.crt $(SSH_USER)@$$vm:~/server.crt; \
+		scp $(SSH_OPTS) certs/$$vm/server.key $(SSH_USER)@$$vm:~/server.key; \
+		ssh $(SSH_OPTS) $(SSH_USER)@$$vm "sudo mkdir -p /etc/nginx/certs \
 			&& sudo mv ~/server.crt /etc/nginx/certs/server.crt \
 			&& sudo mv ~/server.key /etc/nginx/certs/server.key \
 			&& sudo chmod 644 /etc/nginx/certs/server.crt \

@@ -19,6 +19,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BIN="${REPO_ROOT}/bin/linux"
 RESULTS_DIR="${REPO_ROOT}/results/$(date +%Y%m%d-%H%M%S)"
 SSH_USER="${SSH_USER:-ubuntu}"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ebpf}"
+SSH_OPTS="-i ${SSH_KEY} -o StrictHostKeyChecking=no -o BatchMode=yes"
 
 BRIDGE="${1:?bridge interface required (e.g. virbr0)}"
 VM_A="${2:?service-a VM IP required}"
@@ -40,7 +42,7 @@ echo "Results: ${RESULTS_DIR}"
 log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "${RESULTS_DIR}/experiment.log"; }
 
 # SSH helper for VM 0
-vm_a() { ssh "${SSH_USER}@${VM_A}" "$@"; }
+vm_a() { ssh ${SSH_OPTS} "${SSH_USER}@${VM_A}" "$@"; }
 
 # get_tap_for_ip <ip>
 # Returns the host tap interface for the KVM VM with the given IP.
@@ -49,19 +51,23 @@ vm_a() { ssh "${SSH_USER}@${VM_A}" "$@"; }
 # Falls back to BRIDGE if the tap cannot be determined.
 get_tap_for_ip() {
     local target_ip="$1"
-    local vm tap ip
+    local vm tap ip source
     for vm in $(virsh list --name 2>/dev/null); do
-        ip=$(virsh domifaddr "${vm}" --source arp 2>/dev/null \
-            | awk '/ipv4/{print $4}' | cut -d/ -f1 | head -1)
-        if [[ "${ip}" == "${target_ip}" ]]; then
-            tap=$(virsh domiflist "${vm}" 2>/dev/null \
-                | awk '!/^-/ && !/Interface/ && NF>=3 {print $1}' | head -1)
-            if [[ -n "${tap}" ]]; then
-                echo "${tap}"
-                return
+        for source in agent arp lease; do
+            ip=$(virsh domifaddr "${vm}" --source "${source}" 2>/dev/null \
+                | awk '/ipv4/{print $4}' | cut -d/ -f1 | head -1)
+            if [[ "${ip}" == "${target_ip}" ]]; then
+                tap=$(virsh domiflist "${vm}" 2>/dev/null \
+                    | awk '!/^-/ && !/Interface/ && NF>=3 {print $1}' | head -1)
+                if [[ -n "${tap}" ]]; then
+                    echo "${tap}"
+                    return
+                fi
+                break
             fi
-        fi
+        done
     done
+    log "WARN: could not find tap interface for ${target_ip} — falling back to ${BRIDGE} (fault injection may not work)"
     echo "${BRIDGE}"
 }
 
@@ -101,7 +107,7 @@ start_service_a() {
     # where 'ssh host bash -c "..."' passes a newline-prefixed string that
     # breaks bash's -c argument parsing.
     # Variables expanded locally (MODE, VM_ADDRESSES); remote vars use single backslash.
-    ssh "${SSH_USER}@${VM_A}" bash << REMOTE
+    ssh ${SSH_OPTS} "${SSH_USER}@${VM_A}" bash << REMOTE
 LB_MODE=${MODE} \
 VM_ADDRESSES=${VM_ADDRESSES} \
 TLS_CA_CERT=/etc/service-a/ca.crt \
@@ -115,7 +121,7 @@ REMOTE
 stop_service_a() {
     local LOG_DEST="$1"
     # Single-quoted REMOTE — no local variable expansion needed here
-    ssh "${SSH_USER}@${VM_A}" bash << 'REMOTE'
+    ssh ${SSH_OPTS} "${SSH_USER}@${VM_A}" bash << 'REMOTE'
 if [[ -f /tmp/service-a.pid ]]; then
     kill $(cat /tmp/service-a.pid) 2>/dev/null || true
     rm -f /tmp/service-a.pid
@@ -126,7 +132,7 @@ for i in $(seq 1 15); do
     sleep 1
 done
 REMOTE
-    scp "${SSH_USER}@${VM_A}:/tmp/service-a.log" "${LOG_DEST}" 2>/dev/null || true
+    scp ${SSH_OPTS} "${SSH_USER}@${VM_A}:/tmp/service-a.log" "${LOG_DEST}" 2>/dev/null || true
 }
 
 # ----------------------------------------------------------------------------

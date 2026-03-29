@@ -60,11 +60,15 @@ type ConnectionHealth struct {
 	LastRTO         time.Time
 	RTTSpikeCount   uint32
 	Score           float64 // 0.0 (healthy) → 1.0 (dead)
-	UpdatedAt       time.Time
+	// Degraded uses hysteresis: set when Score crosses above 0.5,
+	// cleared only when Score falls below 0.25. This prevents rapid
+	// healthy↔degraded oscillation when the score hovers near the threshold.
+	Degraded  bool
+	UpdatedAt time.Time
 }
 
 func (h *ConnectionHealth) Status() string {
-	if h.Score > 0.5 {
+	if h.Degraded {
 		return "degraded"
 	}
 	return "healthy"
@@ -117,6 +121,10 @@ func (t *Tracker) Record(ev ConnEvent) {
 		h.RTTSpikeCount++
 		h.Score = clamp(h.Score+t.rttSpikeWeight, 0, 1)
 	}
+	// Hysteresis: enter degraded at >0.5, only exit at <0.25 (in Decay).
+	if !h.Degraded && h.Score > 0.5 {
+		h.Degraded = true
+	}
 }
 
 // Decay applies time-based score decay to all connections.
@@ -143,6 +151,11 @@ func (t *Tracker) Decay() {
 	for _, h := range t.conns {
 		if h.Score > 0 {
 			h.Score = clamp(h.Score-decay, 0, 1)
+		}
+		// Clear degraded only when score falls well below the entry threshold (0.5).
+		// The 0.25 gap prevents re-oscillation when score hovers near 0.5.
+		if h.Degraded && h.Score < 0.25 {
+			h.Degraded = false
 		}
 	}
 }

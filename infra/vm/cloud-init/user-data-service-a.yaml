@@ -12,6 +12,8 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
     lock_passwd: false
+    ssh_authorized_keys:
+      - EBPF_SSH_PUBKEY
 
 chpasswd:
   list: |

@@ -25,6 +25,17 @@ struct {
     __type(value, __u32);
 } rtt_baseline SEC(".maps");
 
+/* Per-connection last spike timestamp (ns).  Used to debounce spike events:
+ * at most one spike event per connection per 100ms window.  Without this,
+ * a sustained latency fault fires thousands of events per second, saturating
+ * the ring buffer and driving the tracker score to 1.0 in milliseconds. */
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1024);
+    __type(key, struct conn_key);
+    __type(value, __u64);
+} rtt_spike_ts SEC(".maps");
+
 /* Spike detection multiplier stored in config at key 1 (default = 3) */
 #define CFG_KEY_RTT_MULTIPLIER 1
 
@@ -85,20 +96,31 @@ int BPF_PROG(fentry__tcp_rcv_established, struct sock *sk, struct sk_buff *skb)
     __u32 multiplier = (mult_p && *mult_p > 0) ? *mult_p : 3;
 
     if (srtt_us > old_baseline * multiplier) {
-        struct conn_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-        if (e) {
-            e->key           = key;
-            e->timestamp_ns  = bpf_ktime_get_ns();
-            e->event_type    = EVENT_RTT_SPIKE;
-            e->srtt_us       = srtt_us;
-            e->retrans_count = 0;
-            bpf_ringbuf_submit(e, 0);
+        /* Debounce: emit at most one spike event per connection per 100ms.
+         * Without this, sustained latency fires on every received segment,
+         * flooding the ring buffer and hitting score 1.0 in milliseconds. */
+        __u64 now = bpf_ktime_get_ns();
+        __u64 *last_ts = bpf_map_lookup_elem(&rtt_spike_ts, &key);
+        if (!last_ts || now - *last_ts >= 100000000ULL) {
+            bpf_map_update_elem(&rtt_spike_ts, &key, &now, BPF_ANY);
+            struct conn_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+            if (e) {
+                e->key           = key;
+                e->timestamp_ns  = now;
+                e->event_type    = EVENT_RTT_SPIKE;
+                e->srtt_us       = srtt_us;
+                e->retrans_count = 0;
+                bpf_ringbuf_submit(e, 0);
+            }
         }
+        /* Do NOT update the EMA baseline during a spike — if we did, the
+         * baseline would chase the elevated RTT within ~5 packets and stop
+         * detecting the fault entirely. */
+    } else {
+        /* Normal RTT — update EMA: new = (9*old + current) / 10  (alpha=0.1) */
+        __u32 new_baseline = (9 * old_baseline + srtt_us) / 10;
+        bpf_map_update_elem(&rtt_baseline, &key, &new_baseline, BPF_EXIST);
     }
-
-    /* EMA update: new_baseline = (9 * old + current) / 10  (alpha = 0.1) */
-    __u32 new_baseline = (9 * old_baseline + srtt_us) / 10;
-    bpf_map_update_elem(&rtt_baseline, &key, &new_baseline, BPF_EXIST);
 
     return 0;
 }
