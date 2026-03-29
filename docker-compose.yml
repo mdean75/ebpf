@@ -1,0 +1,105 @@
+# Docker Compose for the eBPF gRPC experiment.
+#
+# Prerequisites:
+#   - BTF-enabled kernel (Ubuntu 22.04+ / kernel 5.8+), or macOS Docker Desktop
+#   - make vmlinux-docker  (generates ebpf-agent/bpf/headers/vmlinux.h)
+#
+# Build and start:
+#   make docker-build  # builds images (generates vmlinux.h if needed)
+#   docker compose up
+#
+# Topology differences vs KVM:
+#   - No nginx: service-a connects directly to service-b on :50051 (no TLS)
+#   - vm0 container runs both service-a and ebpf-agent
+#   - Bridge is named "ebpf-test" — use --iface ebpf-test with fault-injector
+#
+# Fault injection (containerized — works on Linux and macOS Docker Desktop):
+#   VM1_IP=$(docker inspect ebpf-experiment-vm1-1 \
+#              --format '{{(index .NetworkSettings.Networks "ebpf-experiment_ebpf-net").IPAddress}}')
+#   docker compose run --rm fault-injector inject \
+#       --iface ebpf-test --target $VM1_IP --mode packet-loss --rate 5
+
+name: ebpf-experiment
+
+version: "3.9"
+
+services:
+  vm0:
+    build:
+      context: .
+      dockerfile: Dockerfile.vm0
+    # Privileged mode is required for:
+    #   - loading eBPF programs (CAP_BPF / CAP_SYS_ADMIN)
+    #   - attaching tracepoints (CAP_PERFMON)
+    #   - attaching sockops to cgroup (CAP_NET_ADMIN)
+    privileged: true
+    init: true   # tini as PID 1 for proper signal forwarding
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup               # cgroup access for sockops
+      - /sys/kernel/btf:/sys/kernel/btf:ro          # BTF for fentry hook verification
+      - /sys/kernel/tracing:/sys/kernel/tracing      # tracefs for tracepoint attachment
+      - /sys/kernel/debug:/sys/kernel/debug          # debugfs fallback for tracepoints
+    environment:
+      LB_MODE: ebpf
+      VM_ADDRESSES: "vm1:50051,vm2:50051"     # direct to service-b, no TLS
+      EBPF_AGENT_ADDR: "localhost:9090"
+      TARGET_PORT: "50051"
+      RTT_MULTIPLIER: "3"
+      # TLS_CA_CERT intentionally unset → service-a dials plain gRPC (no TLS)
+      # CGROUP_PATH intentionally unset → auto-detected from /proc/self/cgroup
+    ports:
+      - "2112:2112"   # service-a Prometheus
+      - "9092:9090"   # ebpf-agent signal API  (9090 taken by Docker Desktop)
+      - "9091:9091"   # ebpf-agent Prometheus
+    depends_on:
+      - vm1
+      - vm2
+    networks:
+      - ebpf-net
+
+  vm1:
+    build:
+      context: .
+      dockerfile: Dockerfile.service-b
+    environment:
+      GRPC_PORT: "50051"
+      HEALTH_PORT: "8080"
+    ports:
+      - "8082:8080"   # health endpoint (8080 taken by Docker Desktop)
+    networks:
+      - ebpf-net
+
+  vm2:
+    build:
+      context: .
+      dockerfile: Dockerfile.service-b
+    environment:
+      GRPC_PORT: "50051"
+      HEALTH_PORT: "8080"
+    ports:
+      - "8083:8080"   # health endpoint (8081 taken by Docker Desktop)
+    networks:
+      - ebpf-net
+
+  # fault-injector — only runs on demand (not started by 'docker compose up').
+  # Uses host networking so it can reach the ebpf-test bridge directly.
+  # Works on Linux and on macOS Docker Desktop (host networking joins the Linux
+  # VM's netns where ebpf-test lives; tc uses kernel netlink, not TCP/UDP).
+  #
+  # Usage:
+  #   docker compose run --rm fault-injector inject \
+  #       --iface ebpf-test --target <VM_IP> --mode packet-loss --rate 5
+  fault-injector:
+    build:
+      context: .
+      dockerfile: Dockerfile.fault-injector
+    network_mode: host
+    privileged: true
+    profiles: ["fault"]
+
+networks:
+  ebpf-net:
+    driver: bridge
+    driver_opts:
+      # Fixed bridge name so fault-injector always uses --iface ebpf-test
+      com.docker.network.bridge.name: ebpf-test

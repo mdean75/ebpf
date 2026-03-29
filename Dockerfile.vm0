@@ -1,0 +1,68 @@
+# Dockerfile for VM 0: service-a + ebpf-agent.
+#
+# Prerequisites (run on the Linux host before building):
+#   make vmlinux       # generates ebpf-agent/bpf/headers/vmlinux.h from kernel BTF
+#
+# Build:
+#   make docker-build  # (or: docker compose build)
+#
+# The resulting image requires --privileged and /sys/fs/cgroup mounted at runtime
+# (handled by docker-compose.yml).
+
+# ─── Stage 1: Build ──────────────────────────────────────────────────────────
+FROM ubuntu:22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    clang llvm libelf-dev libbpf-dev \
+    linux-headers-generic \
+    build-essential gcc make \
+    curl ca-certificates git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Go 1.22 — use TARGETARCH so arm64 hosts get the arm64 tarball
+ARG GOVERSION=1.22.0
+ARG TARGETARCH=amd64
+RUN curl -sSL https://go.dev/dl/go${GOVERSION}.linux-${TARGETARCH}.tar.gz \
+    | tar -C /usr/local -xz
+ENV PATH="/usr/local/go/bin:/go/bin:${PATH}" GOPATH="/go"
+
+# Install bpf2go — pin to match cilium/ebpf v0.15.0 in ebpf-agent/go.mod
+RUN go install github.com/cilium/ebpf/cmd/bpf2go@v0.15.0
+
+WORKDIR /build
+COPY . .
+
+# vmlinux.h must already exist — run 'make vmlinux' on the host first.
+RUN test -f ebpf-agent/bpf/headers/vmlinux.h || \
+    (echo "ERROR: ebpf-agent/bpf/headers/vmlinux.h is missing." \
+    "Run 'make vmlinux' on a Linux host before building this image." >&2 && exit 1)
+
+# Resolve eBPF agent module dependencies
+RUN go mod tidy -C ebpf-agent
+
+# Generate eBPF skeletons: clang compiles .c → Go-embedded ELF
+RUN cd ebpf-agent && go generate ./internal/loader/...
+
+# Build service-a and ebpf-agent binaries (CGO not needed by either).
+# ebpf-agent is built from within its module directory so the go.work workspace
+# doesn't interfere with finding the bpf2go-generated files.
+RUN mkdir -p bin && CGO_ENABLED=0 go build -o bin/service-a ./service-a
+RUN cd ebpf-agent && CGO_ENABLED=0 go build -o /build/bin/ebpf-agent .
+
+# ─── Stage 2: Runtime ────────────────────────────────────────────────────────
+FROM ubuntu:22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libelf1 curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/bin/service-a  /usr/local/bin/service-a
+COPY --from=builder /build/bin/ebpf-agent /usr/local/bin/ebpf-agent
+COPY docker/entrypoint-vm0.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 2112 9090 9091
+
+ENTRYPOINT ["/entrypoint.sh"]

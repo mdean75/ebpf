@@ -1,0 +1,22 @@
+# Dockerfile for fault-injector: tc netem wrapper CLI.
+# Runs with --network host + --privileged so it can apply tc rules on the
+# Docker bridge (ebpf-test) — works on Linux and macOS Docker Desktop.
+
+# ─── Stage 1: Build ──────────────────────────────────────────────────────────
+FROM golang:1.22-bookworm AS builder
+
+WORKDIR /build
+COPY . .
+RUN go build -o /bin/fault-injector ./fault-injector
+
+# ─── Stage 2: Runtime ────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+
+# iproute2 provides the 'tc' binary used by fault-injector
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /bin/fault-injector /usr/local/bin/fault-injector
+
+ENTRYPOINT ["/usr/local/bin/fault-injector"]

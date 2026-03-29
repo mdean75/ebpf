@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+# run-experiment.sh — orchestrates a full experiment run (Runs 1–5 from the plan).
+#
+# Architecture:
+#   - service-a and ebpf-agent run on VM 0 (SSH-controlled from KVM host)
+#   - fault-injector runs locally on the KVM host (needs tc + CAP_NET_ADMIN)
+#   - service-b runs on VM 1 and VM 2
+#
+# Usage:
+#   ./scripts/run-experiment.sh <bridge-iface> <vm-a-ip> <vm-b-ip-1> <vm-b-ip-2> [...]
+#
+# Example:
+#   ./scripts/run-experiment.sh virbr0 192.168.122.9 192.168.122.10 192.168.122.11
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+BIN="${REPO_ROOT}/bin"
+RESULTS_DIR="${REPO_ROOT}/results/$(date +%Y%m%d-%H%M%S)"
+SSH_USER="${SSH_USER:-ubuntu}"
+
+BRIDGE="${1:?bridge interface required (e.g. virbr0)}"
+VM_A="${2:?service-a VM IP required}"
+shift 2
+VMS=("$@")
+
+if [[ ${#VMS[@]} -lt 2 ]]; then
+    echo "ERROR: at least 2 service-b VM IPs required"
+    exit 1
+fi
+
+VM1="${VMS[0]}"
+VM2="${VMS[1]}"
+VM_ADDRESSES=$(printf '%s:443,' "${VMS[@]}" | sed 's/,$//')
+
+mkdir -p "${RESULTS_DIR}"
+echo "Results: ${RESULTS_DIR}"
+
+log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "${RESULTS_DIR}/experiment.log"; }
+
+# SSH helper for VM 0
+vm_a() { ssh "${SSH_USER}@${VM_A}" "$@"; }
+
+# ----------------------------------------------------------------------------
+# Pre-experiment checks
+# ----------------------------------------------------------------------------
+log "=== Pre-experiment checks ==="
+
+log "Checking VM 0 kernel version..."
+KVER=$(vm_a uname -r)
+log "  VM 0 kernel: ${KVER}"
+
+log "Checking service-b health endpoints..."
+for vm in "${VMS[@]}"; do
+    STATUS=$(curl -sf --max-time 3 "http://${vm}:8080/health" || echo "FAIL")
+    log "  ${vm}: ${STATUS}"
+    if [[ "${STATUS}" != "ok" ]]; then
+        log "ERROR: ${vm} health check failed — is service-b running?"
+        exit 1
+    fi
+done
+
+log "Checking eBPF agent on VM 0..."
+AGENT_STATUS=$(vm_a curl -sf --max-time 3 "http://localhost:9090/health/all" 2>/dev/null || echo "FAIL")
+if [[ "${AGENT_STATUS}" == "FAIL" ]]; then
+    log "WARNING: eBPF agent not reachable on VM 0 — start it before measuring"
+fi
+
+log "Pre-experiment checks passed"
+
+# ----------------------------------------------------------------------------
+# Helper: start service-a on VM 0 with the given LB mode
+# ----------------------------------------------------------------------------
+start_service_a() {
+    local MODE="$1"
+    local LOG_FILE="$2"
+
+    vm_a bash -c "
+        LB_MODE=${MODE} \
+        VM_ADDRESSES=${VM_ADDRESSES} \
+        TLS_CA_CERT=/etc/service-a/ca.crt \
+        EBPF_AGENT_ADDR=localhost:9090 \
+        nohup /usr/local/bin/service-a > /tmp/service-a.log 2>&1 &
+        echo \$! > /tmp/service-a.pid
+        echo 'service-a started (mode=${MODE})'
+    "
+}
+
+stop_service_a() {
+    vm_a bash -c "
+        if [[ -f /tmp/service-a.pid ]]; then
+            kill \$(cat /tmp/service-a.pid) 2>/dev/null || true
+            rm -f /tmp/service-a.pid
+        fi
+    "
+    # Copy log back to results
+    local LOG_DEST="$1"
+    scp "${SSH_USER}@${VM_A}:/tmp/service-a.log" "${LOG_DEST}" 2>/dev/null || true
+}
+
+# ----------------------------------------------------------------------------
+# Helper: run a timed fault scenario
+# ----------------------------------------------------------------------------
+run_scenario() {
+    local RUN_NAME="$1"
+    local LB_MODE="$2"
+    local TARGET_VM="$3"
+    local FAULT_ARGS="${4:-}"
+    local RUN_DIR="${RESULTS_DIR}/${RUN_NAME}-${LB_MODE}"
+
+    mkdir -p "${RUN_DIR}"
+    log ""
+    log "=== ${RUN_NAME} (mode=${LB_MODE}, target=${TARGET_VM:-none}) ==="
+
+    start_service_a "${LB_MODE}" "${RUN_DIR}/service-a.log"
+    log "service-a started on VM 0"
+    sleep 5
+
+    log "t=0: recording started"
+    sleep 10
+
+    if [[ -n "${FAULT_ARGS}" && -n "${TARGET_VM}" ]]; then
+        log "t=10: injecting fault on ${TARGET_VM}: ${FAULT_ARGS}"
+        # shellcheck disable=SC2086
+        sudo "${BIN}/fault-injector" inject --iface "${BRIDGE}" --target "${TARGET_VM}" ${FAULT_ARGS}
+    fi
+
+    sleep 30
+
+    if [[ -n "${FAULT_ARGS}" && -n "${TARGET_VM}" ]]; then
+        log "t=40: clearing fault on ${TARGET_VM}"
+        sudo "${BIN}/fault-injector" clear --iface "${BRIDGE}" --target "${TARGET_VM}"
+    fi
+
+    sleep 20
+
+    log "t=60: stopping"
+    stop_service_a "${RUN_DIR}/service-a.log"
+    log "Run complete. Logs: ${RUN_DIR}/service-a.log"
+}
+
+# ----------------------------------------------------------------------------
+# Run 1 — Baseline (no faults, both modes)
+# ----------------------------------------------------------------------------
+run_scenario "run1-baseline" "baseline" "" ""
+run_scenario "run1-baseline" "ebpf"     "" ""
+
+# ----------------------------------------------------------------------------
+# Run 2 — Packet loss 5% on VM1 (a service-b VM)
+# ----------------------------------------------------------------------------
+run_scenario "run2-packetloss" "baseline" "${VM1}" "--mode packet-loss --rate 5"
+run_scenario "run2-packetloss" "ebpf"     "${VM1}" "--mode packet-loss --rate 5"
+
+# ----------------------------------------------------------------------------
+# Run 3 — Latency spike on VM1
+# ----------------------------------------------------------------------------
+run_scenario "run3-latency" "baseline" "${VM1}" "--mode latency --delay 200ms --jitter 50ms"
+run_scenario "run3-latency" "ebpf"     "${VM1}" "--mode latency --delay 200ms --jitter 50ms"
+
+# ----------------------------------------------------------------------------
+# Run 4 — Complete disconnect on VM1
+# ----------------------------------------------------------------------------
+run_scenario "run4-disconnect" "baseline" "${VM1}" "--mode disconnect"
+run_scenario "run4-disconnect" "ebpf"     "${VM1}" "--mode disconnect"
+
+# ----------------------------------------------------------------------------
+# Run 5 — Repeat Runs 2–4 on VM2 (confirms results are not VM-specific)
+# ----------------------------------------------------------------------------
+run_scenario "run5-packetloss" "ebpf" "${VM2}" "--mode packet-loss --rate 5"
+run_scenario "run5-latency"    "ebpf" "${VM2}" "--mode latency --delay 200ms --jitter 50ms"
+run_scenario "run5-disconnect" "ebpf" "${VM2}" "--mode disconnect"
+
+log ""
+log "=== All runs complete. Results in: ${RESULTS_DIR} ==="
+log "Run ./scripts/collect-results.sh to gather Prometheus metrics."

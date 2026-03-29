@@ -1,0 +1,9 @@
+go 1.22
+
+use (
+	./proto
+	./service-a
+	./service-b
+	./ebpf-agent
+	./fault-injector
+)

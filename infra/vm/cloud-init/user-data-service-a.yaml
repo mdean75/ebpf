@@ -1,0 +1,77 @@
+#cloud-config
+
+# Ubuntu 22.04 cloud-init bootstrap for VM 0 (service-a + ebpf-agent).
+# No nginx, no service-b. Binaries are deployed separately via:
+#   make deploy-a VM_A=<ip>
+#   make deploy-agent VM_A=<ip>
+
+package_update: true
+package_upgrade: false
+
+write_files:
+  # service-a systemd unit
+  - path: /etc/systemd/system/service-a.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=service-a gRPC load-balanced client
+      After=network.target ebpf-agent.service
+      Wants=ebpf-agent.service
+
+      [Service]
+      ExecStart=/usr/local/bin/service-a
+      Restart=always
+      RestartSec=2s
+      # Configure via environment or override file:
+      #   /etc/systemd/system/service-a.service.d/override.conf
+      Environment=LB_MODE=ebpf
+      Environment=MESSAGES_PER_SECOND=200
+      Environment=HEARTBEAT_INTERVAL=500ms
+      Environment=HEARTBEAT_TIMEOUT=2s
+      Environment=EBPF_AGENT_ADDR=localhost:9090
+      # VM_ADDRESSES and TLS_CA_CERT set in override or export before starting
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # ebpf-agent systemd unit (requires root for BPF)
+  - path: /etc/systemd/system/ebpf-agent.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=eBPF stream health agent
+      After=network.target
+
+      [Service]
+      ExecStart=/usr/local/bin/ebpf-agent
+      Restart=always
+      RestartSec=2s
+      User=root
+      Environment=TARGET_PORT=443
+      Environment=RTT_MULTIPLIER=3
+      Environment=CGROUP_PATH=/sys/fs/cgroup
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # Placeholder for CA cert — deployed by provision.sh after gen-certs.sh
+  - path: /etc/service-a/ca.crt
+    owner: root:root
+    permissions: "0644"
+    content: "PLACEHOLDER — replaced by provision.sh after certs/gen-certs.sh"
+
+runcmd:
+  # Create directories for binaries and certs
+  - mkdir -p /usr/local/bin /etc/service-a
+
+  # Open Prometheus and signal API ports
+  - ufw allow 2112/tcp   # service-a Prometheus
+  - ufw allow 9090/tcp   # ebpf-agent signal API
+  - ufw allow 9091/tcp   # ebpf-agent Prometheus
+  - ufw --force enable
+
+  # Enable units (they will start once binaries are deployed)
+  - systemctl enable ebpf-agent
+  - systemctl enable service-a

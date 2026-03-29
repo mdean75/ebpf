@@ -1,0 +1,13 @@
+syntax = "proto3";
+package stream;
+option go_package = "github.com/mdean75/ebpf-grpc-experiment/proto/stream";
+
+service StreamService {
+  rpc BiDiStream(stream Message) returns (stream Message);
+}
+
+message Message {
+  string id        = 1;
+  int64  timestamp = 2;   // Unix nanoseconds, set by sender
+  bytes  payload   = 3;   // Configurable size to control throughput
+}
