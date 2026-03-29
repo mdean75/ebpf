@@ -106,13 +106,46 @@ echo ""
 echo "Waiting for VMs to obtain DHCP leases (30s)..."
 sleep 30
 
+# get_vm_ip <name>
+# Tries multiple strategies to resolve the VM's IPv4 address:
+#   1. qemu-guest-agent  — most reliable; requires agent to be running
+#   2. ARP cache         — works on any network type; requires host has seen VM traffic
+#   3. libvirt lease     — only for libvirt-managed networks (not br0)
+#   4. MAC → ARP lookup  — manual ARP table scan using the VM's MAC address
+get_vm_ip() {
+    local name="$1"
+    local ip mac
+
+    ip=$(virsh domifaddr "${name}" --source agent 2>/dev/null \
+        | awk '/ipv4/{print $4}' | cut -d/ -f1)
+    [[ -n "${ip}" ]] && echo "${ip}" && return
+
+    ip=$(virsh domifaddr "${name}" --source arp 2>/dev/null \
+        | awk '/ipv4/{print $4}' | cut -d/ -f1)
+    [[ -n "${ip}" ]] && echo "${ip}" && return
+
+    ip=$(virsh domifaddr "${name}" --source lease 2>/dev/null \
+        | awk '/ipv4/{print $4}' | cut -d/ -f1)
+    [[ -n "${ip}" ]] && echo "${ip}" && return
+
+    mac=$(virsh domiflist "${name}" 2>/dev/null \
+        | awk '!/^-/ && !/Interface/ && NF>=5 {print $5}')
+    if [[ -n "${mac}" ]]; then
+        ip=$(arp -n 2>/dev/null \
+            | awk -v m="${mac}" 'tolower($3)==tolower(m){print $1}')
+        [[ -n "${ip}" ]] && echo "${ip}" && return
+    fi
+
+    echo ""
+}
+
 echo ""
 echo "VM addresses:"
 for i in $(seq 1 "${COUNT}"); do
     NAME="${NAME_PREFIX}-${i}"
-    IP=$(virsh domifaddr "${NAME}" 2>/dev/null | awk '/ipv4/{print $4}' | cut -d/ -f1)
+    IP=$(get_vm_ip "${NAME}")
     if [[ -z "${IP}" ]]; then
-        IP="<check: virsh domifaddr ${NAME}>"
+        IP="<not found — try: virsh domifaddr ${NAME} --source arp>"
     fi
     echo "  ${NAME}: ${IP}"
 done
