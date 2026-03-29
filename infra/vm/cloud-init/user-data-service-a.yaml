@@ -5,6 +5,21 @@
 #   make deploy-a VM_A=<ip>
 #   make deploy-agent VM_A=<ip>
 
+# Allow console and SSH login with ubuntu/ubuntu.
+# Change the password or switch to ssh_authorized_keys for anything beyond a lab.
+users:
+  - name: ubuntu
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    lock_passwd: false
+
+chpasswd:
+  list: |
+    ubuntu:ubuntu
+  expire: false
+
+ssh_pwauth: true
+
 package_update: true
 package_upgrade: false
 
