@@ -16,7 +16,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-BIN="${REPO_ROOT}/bin"
+BIN="${REPO_ROOT}/bin/linux"
 RESULTS_DIR="${REPO_ROOT}/results/$(date +%Y%m%d-%H%M%S)"
 SSH_USER="${SSH_USER:-ubuntu}"
 

@@ -210,7 +210,7 @@ deploy-certs:
 # Fault injector runs on the KVM host; service-a is SSH-controlled on VM 0.
 # Usage: make experiment BRIDGE=virbr0 VM_A=192.168.122.9 VMS="192.168.122.10 192.168.122.11"
 # ----------------------------------------------------------------------------
-experiment:
+experiment: build-linux-go
 	@[ -n "$(VM_A)" ]   || (echo "ERROR: VM_A required (service-a VM IP)"; exit 1)
 	@[ -n "$(VMS)" ]    || (echo "ERROR: VMS required (service-b VM IPs)"; exit 1)
 	@[ -n "$(BRIDGE)" ] || (echo "ERROR: BRIDGE required"; exit 1)
