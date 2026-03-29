@@ -64,7 +64,9 @@ int BPF_PROG(fentry__tcp_rcv_established, struct sock *sk, struct sk_buff *skb)
         return 0;
 
     __u16 dport = BPF_CORE_READ(sk, __sk_common.skc_dport);
-    if (dport != *target_port)
+    /* skc_dport is in network byte order; *target_port is in host byte order.
+     * bpf_htons converts target to NBO for a correct comparison. */
+    if (dport != bpf_htons(*target_port))
         return 0;
 
     struct tcp_sock *tp = (struct tcp_sock *)sk;

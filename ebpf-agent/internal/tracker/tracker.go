@@ -148,7 +148,17 @@ func (t *Tracker) Decay() {
 	const decayPerSecond = 0.05
 	decay := decayPerSecond * elapsed
 
-	for _, h := range t.conns {
+	// Prune stale entries: connections not updated in >30s have closed.
+	// Without pruning, old entries (different source port, same VM IP) from
+	// prior runs stay at score=0 and cause healthy/degraded oscillation in
+	// the poller, which matches by destination IP across all entries.
+	const staleThreshold = 30 * time.Second
+
+	for key, h := range t.conns {
+		if now.Sub(h.UpdatedAt) > staleThreshold {
+			delete(t.conns, key)
+			continue
+		}
 		if h.Score > 0 {
 			h.Score = clamp(h.Score-decay, 0, 1)
 		}

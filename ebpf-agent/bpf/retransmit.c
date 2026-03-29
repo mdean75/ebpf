@@ -39,7 +39,8 @@ int tracepoint__tcp__tcp_retransmit_skb(struct trace_event_raw_tcp_event_sk_skb 
         return 0;
 
     __u16 dport = BPF_CORE_READ(sk, __sk_common.skc_dport);
-    if (dport != *target_port)
+    /* skc_dport is in network byte order; *target_port is in host byte order. */
+    if (dport != bpf_htons(*target_port))
         return 0;
 
     struct conn_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);

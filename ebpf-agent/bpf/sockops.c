@@ -58,7 +58,10 @@ int sock_ops_handler(struct bpf_sock_ops *skops)
         e->key.saddr    = skops->local_ip4;
         e->key.daddr    = skops->remote_ip4;
         e->key.sport    = (__u16)skops->local_port;
-        e->key.dport    = (__u16)bpf_ntohl(skops->remote_port);
+        /* bpf_ntohl(remote_port) gives host byte order; bpf_htons converts back
+         * to NBO so this key matches the conn_key produced by rtt.c and
+         * retransmit.c (which read skc_dport directly in NBO). */
+        e->key.dport    = bpf_htons((__u16)bpf_ntohl(skops->remote_port));
         e->timestamp_ns = bpf_ktime_get_ns();
         e->event_type   = EVENT_RTO;
         e->srtt_us      = 0;

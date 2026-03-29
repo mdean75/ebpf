@@ -99,21 +99,37 @@ func (p *Poller) poll(url string) {
 		return
 	}
 
+	// Aggregate per VM IP: degraded beats healthy.
+	// Multiple conn_keys can exist for the same VM (e.g. stale entries from
+	// prior source ports that haven't been evicted yet). Taking the worst
+	// status ensures a degraded entry always wins over a healthy one.
+	type vmState struct {
+		status string
+		score  float64
+	}
+	best := make(map[string]vmState, len(p.vmAddrs))
 	for _, ch := range conns {
 		balAddr, ok := p.vmAddrs[ch.Conn.Daddr]
 		if !ok {
 			continue
 		}
+		prev, exists := best[balAddr]
+		if !exists || (ch.Status == "degraded" && prev.status != "degraded") ||
+			(ch.Status == prev.status && ch.Score > prev.score) {
+			best[balAddr] = vmState{status: ch.Status, score: ch.Score}
+		}
+	}
 
+	for balAddr, state := range best {
 		current := p.bal.GetHealth(balAddr)
 		switch {
-		case ch.Status == "degraded" && current == balancer.Healthy:
-			log.Printf("ebpf signal: %s score=%.2f — marking degraded", balAddr, ch.Score)
+		case state.status == "degraded" && current == balancer.Healthy:
+			log.Printf("ebpf signal: %s score=%.2f — marking degraded", balAddr, state.score)
 			p.bal.SetHealth(balAddr, balancer.Degraded, "ebpf_signal")
 			metrics.StreamHealth.WithLabelValues(balAddr).Set(1)
 			metrics.Reroutes.WithLabelValues(balAddr, "ebpf_signal").Inc()
-		case ch.Status == "healthy" && current == balancer.Degraded:
-			log.Printf("ebpf signal: %s score=%.2f — marking healthy", balAddr, ch.Score)
+		case state.status == "healthy" && current == balancer.Degraded:
+			log.Printf("ebpf signal: %s score=%.2f — marking healthy", balAddr, state.score)
 			p.bal.SetHealth(balAddr, balancer.Healthy, "ebpf_recovery")
 			metrics.StreamHealth.WithLabelValues(balAddr).Set(0)
 		}
