@@ -156,29 +156,29 @@ snapshot_metrics() {
 
     # Human-readable per-run summary
     {
-        grep '^service_a_messages_sent_total{' "${prom}" | \
+        { grep '^service_a_messages_sent_total{'      "${prom}" || true; } | \
             sed 's/service_a_messages_sent_total{addr="\([^"]*\)"} \(.*\)/  sent          \1  \2/'
-        grep '^service_a_messages_lost_total{' "${prom}" | \
+        { grep '^service_a_messages_lost_total{'      "${prom}" || true; } | \
             sed 's/service_a_messages_lost_total{addr="\([^"]*\)",reason="\([^"]*\)"} \(.*\)/  lost\/\2       \1  \3/'
-        if grep -q '^service_a_messages_rerouted_total{' "${prom}"; then
+        if grep -q '^service_a_messages_rerouted_total{' "${prom}" 2>/dev/null; then
             grep '^service_a_messages_rerouted_total{' "${prom}" | \
                 sed 's/service_a_messages_rerouted_total{skipped_addr="\([^"]*\)"} \(.*\)/  rerouted      \1  \2/'
         else
             echo "  rerouted      (none — baseline mode or no degraded streams)"
         fi
         local dropped
-        dropped=$(grep '^service_a_messages_dropped_total ' "${prom}" | awk '{print $NF+0}')
+        dropped=$(grep '^service_a_messages_dropped_total ' "${prom}" 2>/dev/null | awk '{print $NF+0}')
         printf "  dropped       (all streams down)  %d\n" "${dropped:-0}"
-        grep '^service_a_reroutes_total{' "${prom}" | \
+        { grep '^service_a_reroutes_total{'           "${prom}" || true; } | \
             sed 's/service_a_reroutes_total{addr="\([^"]*\)",reason="\([^"]*\)"} \(.*\)/  transition    \1  [\2]  \3/'
     } > "${RUN_DIR}/metrics-summary.txt"
 
     # Log totals inline so they appear in experiment.log
     local sent lost rerouted dropped
-    sent=$(grep '^service_a_messages_sent_total{' "${prom}" | awk '{sum+=$NF} END {print sum+0}')
-    lost=$(grep '^service_a_messages_lost_total{' "${prom}" | awk '{sum+=$NF} END {print sum+0}')
-    rerouted=$(grep '^service_a_messages_rerouted_total{' "${prom}" | awk '{sum+=$NF} END {print sum+0}')
-    dropped=$(grep '^service_a_messages_dropped_total ' "${prom}" | awk '{print $NF+0}')
+    sent=$(grep '^service_a_messages_sent_total{'      "${prom}" 2>/dev/null | awk '{sum+=$NF} END {print sum+0}')
+    lost=$(grep '^service_a_messages_lost_total{'      "${prom}" 2>/dev/null | awk '{sum+=$NF} END {print sum+0}')
+    rerouted=$(grep '^service_a_messages_rerouted_total{' "${prom}" 2>/dev/null | awk '{sum+=$NF} END {print sum+0}')
+    dropped=$(grep '^service_a_messages_dropped_total ' "${prom}" 2>/dev/null | awk '{print $NF+0}')
     log "  metrics: sent=${sent} lost=${lost} rerouted=${rerouted} dropped=${dropped:-0}"
 }
 
@@ -273,10 +273,10 @@ printf "%-35s %8s %8s %10s %8s\n" "---" "----" "----" "--------" "-------" | \
 for prom in "${RESULTS_DIR}"/*/service-a-metrics.prom; do
     [[ -f "${prom}" ]] || continue
     run=$(basename "$(dirname "${prom}")")
-    sent=$(grep '^service_a_messages_sent_total{'     "${prom}" | awk '{sum+=$NF} END {print sum+0}')
-    lost=$(grep '^service_a_messages_lost_total{'     "${prom}" | awk '{sum+=$NF} END {print sum+0}')
-    rerouted=$(grep '^service_a_messages_rerouted_total{' "${prom}" | awk '{sum+=$NF} END {print sum+0}')
-    dropped=$(grep '^service_a_messages_dropped_total '   "${prom}" | awk '{print $NF+0}')
+    sent=$(grep '^service_a_messages_sent_total{'      "${prom}" 2>/dev/null | awk '{sum+=$NF} END {print sum+0}')
+    lost=$(grep '^service_a_messages_lost_total{'      "${prom}" 2>/dev/null | awk '{sum+=$NF} END {print sum+0}')
+    rerouted=$(grep '^service_a_messages_rerouted_total{' "${prom}" 2>/dev/null | awk '{sum+=$NF} END {print sum+0}')
+    dropped=$(grep '^service_a_messages_dropped_total '   "${prom}" 2>/dev/null | awk '{print $NF+0}')
     printf "%-35s %8d %8d %10d %8d\n" \
         "${run}" "${sent}" "${lost}" "${rerouted}" "${dropped:-0}" | \
         tee -a "${RESULTS_DIR}/experiment.log"
