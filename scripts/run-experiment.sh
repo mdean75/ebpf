@@ -97,35 +97,35 @@ log "Pre-experiment checks passed"
 # ----------------------------------------------------------------------------
 start_service_a() {
     local MODE="$1"
-    local LOG_FILE="$2"
-
-    vm_a bash -c "
-        LB_MODE=${MODE} \
-        VM_ADDRESSES=${VM_ADDRESSES} \
-        TLS_CA_CERT=/etc/service-a/ca.crt \
-        EBPF_AGENT_ADDR=localhost:9090 \
-        nohup /usr/local/bin/service-a > /tmp/service-a.log 2>&1 &
-        echo \$! > /tmp/service-a.pid
-        echo 'service-a started (mode=${MODE})'
-    "
+    # Pipe script via heredoc — avoids the SSH multi-argument quoting issue
+    # where 'ssh host bash -c "..."' passes a newline-prefixed string that
+    # breaks bash's -c argument parsing.
+    # Variables expanded locally (MODE, VM_ADDRESSES); remote vars use single backslash.
+    ssh "${SSH_USER}@${VM_A}" bash << REMOTE
+LB_MODE=${MODE} \
+VM_ADDRESSES=${VM_ADDRESSES} \
+TLS_CA_CERT=/etc/service-a/ca.crt \
+EBPF_AGENT_ADDR=localhost:9090 \
+nohup /usr/local/bin/service-a > /tmp/service-a.log 2>&1 &
+echo \$! > /tmp/service-a.pid
+echo "service-a started (mode=${MODE})"
+REMOTE
 }
 
 stop_service_a() {
-    vm_a bash -c "
-        if [[ -f /tmp/service-a.pid ]]; then
-            kill \$(cat /tmp/service-a.pid) 2>/dev/null || true
-            rm -f /tmp/service-a.pid
-        fi
-        # Also catch any orphaned instance (e.g. from a previous failed run)
-        pkill -f /usr/local/bin/service-a 2>/dev/null || true
-        # Wait for port 2112 to be released before returning
-        for i in \$(seq 1 15); do
-            ss -tlnp 2>/dev/null | grep -q ':2112' || break
-            sleep 1
-        done
-    "
-    # Copy log back to results
     local LOG_DEST="$1"
+    # Single-quoted REMOTE — no local variable expansion needed here
+    ssh "${SSH_USER}@${VM_A}" bash << 'REMOTE'
+if [[ -f /tmp/service-a.pid ]]; then
+    kill $(cat /tmp/service-a.pid) 2>/dev/null || true
+    rm -f /tmp/service-a.pid
+fi
+pkill -f /usr/local/bin/service-a 2>/dev/null || true
+for i in $(seq 1 15); do
+    ss -tlnp 2>/dev/null | grep -q ':2112' || break
+    sleep 1
+done
+REMOTE
     scp "${SSH_USER}@${VM_A}:/tmp/service-a.log" "${LOG_DEST}" 2>/dev/null || true
 }
 
