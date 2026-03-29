@@ -22,6 +22,8 @@ ssh_pwauth: true
 
 package_update: true
 package_upgrade: false
+packages:
+  - qemu-guest-agent
 
 write_files:
   # service-a systemd unit

@@ -24,6 +24,7 @@ package_upgrade: false
 packages:
   - nginx
   - ufw
+  - qemu-guest-agent
 
 write_files:
   # nginx stream proxy config (L4 TLS → service-b plain TCP)
