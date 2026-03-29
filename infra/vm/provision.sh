@@ -106,6 +106,17 @@ echo ""
 echo "Waiting for VMs to obtain DHCP leases (30s)..."
 sleep 30
 
+# Prime the ARP cache by pinging the broadcast address on the bridge.
+# Without this, VMs that haven't sent traffic to the host won't appear
+# in 'virsh domifaddr --source arp'.
+BROADCAST=$(ip -4 addr show dev "${NETWORK}" 2>/dev/null \
+    | awk '/inet /{print $4}')
+if [[ -n "${BROADCAST}" ]]; then
+    echo "Priming ARP cache (ping broadcast ${BROADCAST})..."
+    ping -b -c3 -W1 "${BROADCAST}" >/dev/null 2>&1 || true
+    sleep 2
+fi
+
 # get_vm_ip <name>
 # Tries multiple strategies to resolve the VM's IPv4 address:
 #   1. qemu-guest-agent  — most reliable; requires agent to be running
