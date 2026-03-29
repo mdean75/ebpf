@@ -83,7 +83,9 @@ runcmd:
   # Create directories for binaries and certs
   - mkdir -p /usr/local/bin /etc/service-a
 
-  # Open Prometheus and signal API ports
+  # Open SSH before enabling ufw — without this, enabling ufw drops port 22
+  # and all subsequent SSH/SCP connections hang indefinitely.
+  - ufw allow OpenSSH
   - ufw allow 2112/tcp   # service-a Prometheus
   - ufw allow 9090/tcp   # ebpf-agent signal API
   - ufw allow 9091/tcp   # ebpf-agent Prometheus

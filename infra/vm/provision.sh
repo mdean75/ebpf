@@ -106,15 +106,19 @@ echo ""
 echo "Waiting for VMs to obtain DHCP leases (30s)..."
 sleep 30
 
-# Prime the ARP cache by pinging the broadcast address on the bridge.
-# Without this, VMs that haven't sent traffic to the host won't appear
-# in 'virsh domifaddr --source arp'.
-BROADCAST=$(ip -4 addr show dev "${NETWORK}" 2>/dev/null \
-    | awk '/inet /{print $4}')
-if [[ -n "${BROADCAST}" ]]; then
-    echo "Priming ARP cache (ping broadcast ${BROADCAST})..."
-    ping -b -c3 -W1 "${BROADCAST}" >/dev/null 2>&1 || true
-    sleep 2
+# Prime the ARP cache with an ARP scan of the bridge subnet.
+# broadcast ping is unreliable (kernel ignores it by default); nmap -sn
+# sends ARP requests at L2 which always populate the ARP table.
+SUBNET=$(ip -4 addr show dev "${NETWORK}" 2>/dev/null \
+    | awk '/inet /{print $2}')
+if [[ -n "${SUBNET}" ]]; then
+    if command -v nmap >/dev/null 2>&1; then
+        echo "Priming ARP cache (nmap ARP scan ${SUBNET})..."
+        nmap -sn "${SUBNET}" >/dev/null 2>&1 || true
+        sleep 1
+    else
+        echo "WARN: nmap not found — install it for reliable IP detection (sudo apt-get install -y nmap)"
+    fi
 fi
 
 # get_vm_ip <name>

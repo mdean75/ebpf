@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .PHONY: all deps deps-mac proto generate vmlinux vmlinux-docker \
         build build-go build-agent build-linux build-linux-go build-linux-agent \
-        test deploy-a deploy-agent deploy-b experiment docker-build clean
+        test deploy-a deploy-agent deploy-b deploy-certs experiment docker-build clean
 
 BINARY_DIR := bin
 GO         := go
@@ -173,6 +173,23 @@ deploy-b: build-linux-go
 		echo "Deploying service-b to $$vm..."; \
 		scp $(BINARY_DIR)/linux/service-b $(SSH_USER)@$$vm:/usr/local/bin/service-b; \
 		ssh $(SSH_USER)@$$vm "sudo systemctl restart service-b"; \
+	done
+
+# Deploy TLS certs to service-b VMs.
+# /etc/nginx/certs/ is root-owned, so we scp to ~/ then sudo mv into place.
+# Usage: make deploy-certs VMS="192.168.122.10 192.168.122.11"
+deploy-certs:
+	@[ -n "$(VMS)" ] || (echo "ERROR: VMS is required, e.g. VMS=\"192.168.122.10 192.168.122.11\""; exit 1)
+	@for vm in $(VMS); do \
+		echo "Deploying certs to $$vm..."; \
+		scp certs/$$vm/server.crt $(SSH_USER)@$$vm:~/server.crt; \
+		scp certs/$$vm/server.key $(SSH_USER)@$$vm:~/server.key; \
+		ssh $(SSH_USER)@$$vm "sudo mkdir -p /etc/nginx/certs \
+			&& sudo mv ~/server.crt /etc/nginx/certs/server.crt \
+			&& sudo mv ~/server.key /etc/nginx/certs/server.key \
+			&& sudo chmod 644 /etc/nginx/certs/server.crt \
+			&& sudo chmod 600 /etc/nginx/certs/server.key \
+			&& sudo systemctl restart nginx"; \
 	done
 
 # ----------------------------------------------------------------------------

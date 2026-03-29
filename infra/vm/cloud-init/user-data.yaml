@@ -93,10 +93,13 @@ write_files:
       WantedBy=multi-user.target
 
 runcmd:
-  # Create cert directory
+  # Create cert directory, owned by ubuntu so scp works without sudo
   - mkdir -p /etc/nginx/certs
+  - chown ubuntu:ubuntu /etc/nginx/certs
 
-  # Open port 443 and 8080 in ufw
+  # Open SSH before enabling ufw — without this, enabling ufw drops port 22
+  # and all subsequent SSH/SCP connections hang indefinitely.
+  - ufw allow OpenSSH
   - ufw allow 443/tcp
   - ufw allow 8080/tcp
   - ufw --force enable
