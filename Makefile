@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .PHONY: all deps deps-mac proto generate vmlinux vmlinux-docker \
         build build-go build-agent build-linux build-linux-go build-linux-agent \
-        test deploy-a deploy-agent deploy-b deploy-certs experiment docker-build clean
+        test deploy-a deploy-agent deploy-b deploy-ca-cert deploy-certs experiment docker-build clean
 
 BINARY_DIR := bin
 GO         := $(shell command -v go 2>/dev/null || echo go)
@@ -182,6 +182,15 @@ deploy-b: build-linux-go
 # Deploy TLS certs to service-b VMs.
 # /etc/nginx/certs/ is root-owned, so we scp to ~/ then sudo mv into place.
 # Usage: make deploy-certs VMS="192.168.122.10 192.168.122.11"
+# Deploy CA cert to service-a VM.
+# /etc/service-a/ is root-owned, so we scp to ~/ then sudo mv into place.
+# Usage: make deploy-ca-cert VM_A=192.168.122.9
+deploy-ca-cert:
+	@[ -n "$(VM_A)" ] || (echo "ERROR: VM_A is required"; exit 1)
+	@[ -f certs/ca.crt ] || (echo "ERROR: certs/ca.crt not found — run ./certs/gen-certs.sh first"; exit 1)
+	scp certs/ca.crt $(SSH_USER)@$(VM_A):~/ca.crt
+	ssh $(SSH_USER)@$(VM_A) "sudo mkdir -p /etc/service-a && sudo mv ~/ca.crt /etc/service-a/ca.crt && sudo chmod 644 /etc/service-a/ca.crt"
+
 deploy-certs:
 	@[ -n "$(VMS)" ] || (echo "ERROR: VMS is required, e.g. VMS=\"192.168.122.10 192.168.122.11\""; exit 1)
 	@for vm in $(VMS); do \
