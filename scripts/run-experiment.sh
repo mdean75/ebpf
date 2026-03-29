@@ -54,9 +54,11 @@ get_tap_for_ip() {
     local vm tap ip source
     for vm in $(virsh list --name 2>/dev/null); do
         for source in agent arp lease; do
-            ip=$(virsh domifaddr "${vm}" --source "${source}" 2>/dev/null \
-                | awk '/ipv4/{print $4}' | cut -d/ -f1 | head -1)
-            if [[ "${ip}" == "${target_ip}" ]]; then
+            # Check whether the target IP appears anywhere in the output —
+            # don't use head -1 because agent source reports loopback first.
+            if virsh domifaddr "${vm}" --source "${source}" 2>/dev/null \
+                    | awk '/ipv4/{print $4}' | cut -d/ -f1 \
+                    | grep -qx "${target_ip}"; then
                 tap=$(virsh domiflist "${vm}" 2>/dev/null \
                     | awk '!/^-/ && !/Interface/ && NF>=3 {print $1}' | head -1)
                 if [[ -n "${tap}" ]]; then
@@ -67,7 +69,8 @@ get_tap_for_ip() {
             fi
         done
     done
-    log "WARN: could not find tap interface for ${target_ip} — falling back to ${BRIDGE} (fault injection may not work)"
+    # Write warning to stderr so it doesn't pollute the $(...) return value
+    echo "[$(date +%H:%M:%S)] WARN: could not find tap interface for ${target_ip} — falling back to ${BRIDGE} (fault injection may not work)" | tee -a "${RESULTS_DIR}/experiment.log" >&2
     echo "${BRIDGE}"
 }
 

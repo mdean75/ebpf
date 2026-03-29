@@ -158,17 +158,18 @@ get_vm_ip() {
     local name="$1"
     local ip mac
 
+    # Filter out loopback — agent source reports all interfaces including lo
     ip=$(virsh domifaddr "${name}" --source agent 2>/dev/null \
-        | awk '/ipv4/{print $4}' | cut -d/ -f1)
-    [[ -n "${ip}" ]] && echo "${ip}" && return
+        | awk '/ipv4/{print $4}' | cut -d/ -f1 | grep -v '^127\.')
+    [[ -n "${ip}" ]] && echo "${ip}" | head -1 && return
 
     ip=$(virsh domifaddr "${name}" --source arp 2>/dev/null \
-        | awk '/ipv4/{print $4}' | cut -d/ -f1)
-    [[ -n "${ip}" ]] && echo "${ip}" && return
+        | awk '/ipv4/{print $4}' | cut -d/ -f1 | grep -v '^127\.')
+    [[ -n "${ip}" ]] && echo "${ip}" | head -1 && return
 
     ip=$(virsh domifaddr "${name}" --source lease 2>/dev/null \
-        | awk '/ipv4/{print $4}' | cut -d/ -f1)
-    [[ -n "${ip}" ]] && echo "${ip}" && return
+        | awk '/ipv4/{print $4}' | cut -d/ -f1 | grep -v '^127\.')
+    [[ -n "${ip}" ]] && echo "${ip}" | head -1 && return
 
     mac=$(virsh domiflist "${name}" 2>/dev/null \
         | awk '!/^-/ && !/Interface/ && NF>=5 {print $5}')
