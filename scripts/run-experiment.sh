@@ -115,6 +115,7 @@ LB_MODE=${MODE} \
 VM_ADDRESSES=${VM_ADDRESSES} \
 TLS_CA_CERT=/etc/service-a/ca.crt \
 EBPF_AGENT_ADDR=localhost:9090 \
+EBPF_AGENT_GRPC_ADDR=localhost:9092 \
 nohup /usr/local/bin/service-a > /tmp/service-a.log 2>&1 &
 echo \$! > /tmp/service-a.pid
 echo "service-a started (mode=${MODE})"

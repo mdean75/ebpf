@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+// HealthTransition is emitted when a connection's health state changes.
+// Sent on the channel returned by Tracker.Events().
+type HealthTransition struct {
+	DaddrIP string
+	Score   float64
+	Status  string // "healthy" or "degraded"
+}
+
 // EventType mirrors the C constants in common.h.
 type EventType uint8
 
@@ -87,6 +95,8 @@ type Tracker struct {
 	unackedWeight    float64 // added per unacked threshold crossing
 
 	lastDecay time.Time
+
+	events chan HealthTransition // health state change notifications
 }
 
 // New returns a Tracker with the default score weights from the plan:
@@ -104,7 +114,14 @@ func New() *Tracker {
 		rttSpikeWeight:   0.1,
 		unackedWeight:    0.6,
 		lastDecay:        time.Now(),
+		events:           make(chan HealthTransition, 64),
 	}
+}
+
+// Events returns the channel on which health state transitions are published.
+// Each send is non-blocking; events are dropped if the consumer is too slow.
+func (t *Tracker) Events() <-chan HealthTransition {
+	return t.events
 }
 
 // Record ingests a conn_event and updates the connection's score.
@@ -132,6 +149,10 @@ func (t *Tracker) Record(ev ConnEvent) {
 	// Hysteresis: enter degraded at >0.5, only exit at <0.25 (in Decay).
 	if !h.Degraded && h.Score > 0.5 {
 		h.Degraded = true
+		select {
+		case t.events <- HealthTransition{DaddrIP: h.Key.DaddrIP(), Score: h.Score, Status: "degraded"}:
+		default:
+		}
 	}
 }
 
@@ -175,6 +196,10 @@ func (t *Tracker) Decay() {
 		// The 0.25 gap prevents re-oscillation when score hovers near 0.5.
 		if h.Degraded && h.Score < 0.25 {
 			h.Degraded = false
+			select {
+			case t.events <- HealthTransition{DaddrIP: h.Key.DaddrIP(), Score: h.Score, Status: "healthy"}:
+			default:
+			}
 		}
 		// Prune fully-recovered entries immediately — no need to retain a
 		// score=0 healthy entry; if the connection re-appears it starts fresh.

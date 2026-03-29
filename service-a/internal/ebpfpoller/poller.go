@@ -1,46 +1,32 @@
+// Package ebpfpoller connects to the eBPF agent's gRPC health stream and
+// applies state transitions to the balancer immediately on receipt.
 package ebpfpoller
 
 import (
-	"encoding/json"
-	"fmt"
+	"context"
 	"log"
-	"net/http"
 	"time"
 
 	"github.com/mdean75/ebpf-grpc-experiment/service-a/internal/balancer"
 	"github.com/mdean75/ebpf-grpc-experiment/service-a/internal/metrics"
+	pb "github.com/mdean75/ebpf-grpc-experiment/proto/health"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
-const pollInterval = 100 * time.Millisecond
-
-// ConnHealth is the JSON shape returned by the eBPF agent's /health/all endpoint.
-type ConnHealth struct {
-	Conn struct {
-		Saddr string `json:"saddr"`
-		Daddr string `json:"daddr"`
-		Dport uint16 `json:"dport"`
-	} `json:"conn"`
-	Score     float64 `json:"score"`
-	Status    string  `json:"status"` // "healthy" or "degraded"
-	LastEvent string  `json:"last_event"`
-	UpdatedAt string  `json:"updated_at"`
-}
-
-// Poller polls the eBPF agent's /health/all endpoint and applies signals
-// to the balancer. Only active in ModeEBPF.
-type Poller struct {
+// Watcher holds an open gRPC stream to the eBPF agent and applies health
+// state transitions to the balancer as they arrive.
+type Watcher struct {
 	agentAddr string
 	bal       *balancer.Balancer
-	// vmAddrs maps VM IP to its dial address (ip:port) so we can match
-	// eBPF connection keys (daddr) back to balancer keys.
+	// vmAddrs maps VM IP (bare, no port) to the full balancer key (ip:port).
 	vmAddrs map[string]string
-	client  *http.Client
-	stopCh  chan struct{}
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
-func New(agentAddr string, bal *balancer.Balancer, vmAddresses []string) *Poller {
-	// Build a map from bare IP to full address for balancer lookups.
-	// VM addresses are "ip:port"; we match on IP portion.
+// New creates a Watcher. vmAddresses is the same slice passed to balancer.New.
+func New(agentAddr string, bal *balancer.Balancer, vmAddresses []string) *Watcher {
 	vmAddrs := make(map[string]string, len(vmAddresses))
 	for _, addr := range vmAddresses {
 		ip := addr
@@ -52,86 +38,80 @@ func New(agentAddr string, bal *balancer.Balancer, vmAddresses []string) *Poller
 		}
 		vmAddrs[ip] = addr
 	}
-	return &Poller{
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Watcher{
 		agentAddr: agentAddr,
 		bal:       bal,
 		vmAddrs:   vmAddrs,
-		client:    &http.Client{Timeout: 500 * time.Millisecond},
-		stopCh:    make(chan struct{}),
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 }
 
-// Start polls the agent until Stop is called. Should be run in a goroutine.
-func (p *Poller) Start() {
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-
-	url := fmt.Sprintf("http://%s/health/all", p.agentAddr)
-
+// Start connects to the agent and streams events until Stop is called.
+// On disconnect it reconnects with a 2-second backoff. Run in a goroutine.
+func (w *Watcher) Start() {
 	for {
-		select {
-		case <-p.stopCh:
-			return
-		case <-ticker.C:
-			if p.bal.Mode() != balancer.ModeEBPF {
-				continue
+		if err := w.watch(); err != nil {
+			if w.ctx.Err() != nil {
+				return // Stop() was called
 			}
-			p.poll(url)
+			log.Printf("ebpf watcher: %v — reconnecting in 2s", err)
+			select {
+			case <-time.After(2 * time.Second):
+			case <-w.ctx.Done():
+				return
+			}
 		}
 	}
 }
 
-func (p *Poller) Stop() {
-	close(p.stopCh)
-}
-
-func (p *Poller) poll(url string) {
-	resp, err := p.client.Get(url)
+func (w *Watcher) watch() error {
+	//nolint:staticcheck // grpc.Dial is deprecated but matches the rest of the codebase
+	conn, err := grpc.Dial(w.agentAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		// Agent not reachable — don't change stream health based on absence of data.
+		return err
+	}
+	defer conn.Close()
+
+	stream, err := pb.NewHealthWatcherClient(conn).Watch(w.ctx, &pb.WatchRequest{})
+	if err != nil {
+		return err
+	}
+
+	log.Printf("ebpf watcher: connected to %s", w.agentAddr)
+	for {
+		ev, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		w.apply(ev)
+	}
+}
+
+func (w *Watcher) apply(ev *pb.HealthEvent) {
+	balAddr, ok := w.vmAddrs[ev.Daddr]
+	if !ok {
 		return
 	}
-	defer resp.Body.Close()
-
-	var conns []ConnHealth
-	if err := json.NewDecoder(resp.Body).Decode(&conns); err != nil {
-		log.Printf("ebpf poller: decode error: %v", err)
+	if w.bal.Mode() != balancer.ModeEBPF {
 		return
 	}
+	current := w.bal.GetHealth(balAddr)
+	switch {
+	case ev.Status == "degraded" && current == balancer.Healthy:
+		log.Printf("ebpf signal: %s score=%.2f — marking degraded", balAddr, ev.Score)
+		w.bal.SetHealth(balAddr, balancer.Degraded, "ebpf_signal")
+		metrics.StreamHealth.WithLabelValues(balAddr).Set(1)
+		metrics.Reroutes.WithLabelValues(balAddr, "ebpf_signal").Inc()
+	case ev.Status == "healthy" && current == balancer.Degraded:
+		log.Printf("ebpf signal: %s score=%.2f — marking healthy", balAddr, ev.Score)
+		w.bal.SetHealth(balAddr, balancer.Healthy, "ebpf_recovery")
+		metrics.StreamHealth.WithLabelValues(balAddr).Set(0)
+	}
+}
 
-	// Aggregate per VM IP: degraded beats healthy.
-	// Multiple conn_keys can exist for the same VM (e.g. stale entries from
-	// prior source ports that haven't been evicted yet). Taking the worst
-	// status ensures a degraded entry always wins over a healthy one.
-	type vmState struct {
-		status string
-		score  float64
-	}
-	best := make(map[string]vmState, len(p.vmAddrs))
-	for _, ch := range conns {
-		balAddr, ok := p.vmAddrs[ch.Conn.Daddr]
-		if !ok {
-			continue
-		}
-		prev, exists := best[balAddr]
-		if !exists || (ch.Status == "degraded" && prev.status != "degraded") ||
-			(ch.Status == prev.status && ch.Score > prev.score) {
-			best[balAddr] = vmState{status: ch.Status, score: ch.Score}
-		}
-	}
-
-	for balAddr, state := range best {
-		current := p.bal.GetHealth(balAddr)
-		switch {
-		case state.status == "degraded" && current == balancer.Healthy:
-			log.Printf("ebpf signal: %s score=%.2f — marking degraded", balAddr, state.score)
-			p.bal.SetHealth(balAddr, balancer.Degraded, "ebpf_signal")
-			metrics.StreamHealth.WithLabelValues(balAddr).Set(1)
-			metrics.Reroutes.WithLabelValues(balAddr, "ebpf_signal").Inc()
-		case state.status == "healthy" && current == balancer.Degraded:
-			log.Printf("ebpf signal: %s score=%.2f — marking healthy", balAddr, state.score)
-			p.bal.SetHealth(balAddr, balancer.Healthy, "ebpf_recovery")
-			metrics.StreamHealth.WithLabelValues(balAddr).Set(0)
-		}
-	}
+// Stop cancels the context, closing the active stream and preventing reconnects.
+func (w *Watcher) Stop() {
+	w.cancel()
 }

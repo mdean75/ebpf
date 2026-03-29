@@ -41,9 +41,9 @@ func main() {
 		go clients[i].Start()
 	}
 
-	// eBPF agent poller (only meaningful in ebpf mode, but always running
-	// so the mode can be switched at runtime via the balancer)
-	poller := ebpfpoller.New(cfg.EBPFAgentAddr, bal, cfg.VMAddresses)
+	// eBPF agent health watcher — push-based gRPC stream
+	// (only acts in ebpf mode, but always connected so mode switches take effect immediately)
+	poller := ebpfpoller.New(cfg.EBPFAgentGRPCAddr, bal, cfg.VMAddresses)
 	go poller.Start()
 
 	// Message generator: produce MessagesPerSecond across healthy streams

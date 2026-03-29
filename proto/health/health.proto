@@ -1,0 +1,18 @@
+syntax = "proto3";
+package health;
+option go_package = "github.com/mdean75/ebpf-grpc-experiment/proto/health";
+
+service HealthWatcher {
+  // Watch streams health state transitions as they happen.
+  // The agent pushes an event each time a connection transitions
+  // between healthy and degraded (or vice versa).
+  rpc Watch(WatchRequest) returns (stream HealthEvent);
+}
+
+message WatchRequest {}
+
+message HealthEvent {
+  string daddr  = 1; // destination IP (VM address as seen by eBPF)
+  double score  = 2; // health score at time of transition (0=healthy, 1=dead)
+  string status = 3; // "healthy" or "degraded"
+}

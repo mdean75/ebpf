@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net"
 	"net/http"
 	"os"
 	ossignal "os/signal"
@@ -11,11 +12,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mdean75/ebpf-grpc-experiment/ebpf-agent/internal/healthstream"
 	"github.com/mdean75/ebpf-grpc-experiment/ebpf-agent/internal/loader"
 	agentmetrics "github.com/mdean75/ebpf-grpc-experiment/ebpf-agent/internal/metrics"
 	"github.com/mdean75/ebpf-grpc-experiment/ebpf-agent/internal/signal"
 	"github.com/mdean75/ebpf-grpc-experiment/ebpf-agent/internal/tracker"
+	pb "github.com/mdean75/ebpf-grpc-experiment/proto/health"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -50,12 +54,26 @@ func main() {
 	// Platform-specific ring buffer readers (linux: real; other: no-op)
 	startRingBufferReaders(progs, t)
 
-	// HTTP signal API on :9090
+	// HTTP signal API on :9090 (kept for manual inspection/debugging)
 	signalSrv := signal.New(t, ":9090")
 	go func() {
 		log.Println("signal API on :9090")
 		if err := signalSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("signal server: %v", err)
+		}
+	}()
+
+	// gRPC health stream on :9092 — push-based state change notifications
+	grpcLis, err := net.Listen("tcp", ":9092")
+	if err != nil {
+		log.Fatalf("grpc listen: %v", err)
+	}
+	grpcSrv := grpc.NewServer()
+	pb.RegisterHealthWatcherServer(grpcSrv, healthstream.New(t))
+	go func() {
+		log.Println("health stream gRPC on :9092")
+		if err := grpcSrv.Serve(grpcLis); err != nil {
+			log.Printf("grpc server: %v", err)
 		}
 	}()
 
