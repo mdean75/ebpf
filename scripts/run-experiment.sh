@@ -111,6 +111,8 @@ start_service_a() {
     # breaks bash's -c argument parsing.
     # Variables expanded locally (MODE, VM_ADDRESSES); remote vars use single backslash.
     ssh ${SSH_OPTS} "${SSH_USER}@${VM_A}" bash << REMOTE
+pkill -f /usr/local/bin/service-a 2>/dev/null || true
+sleep 0.5
 LB_MODE=${MODE} \
 VM_ADDRESSES=${VM_ADDRESSES} \
 TLS_CA_CERT=/etc/service-a/ca.crt \
