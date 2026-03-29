@@ -20,6 +20,12 @@
 
 set -euo pipefail
 
+# Resolve cloud-localds — may not be in sudo's restricted PATH
+CLOUD_LOCALDS=$(command -v cloud-localds 2>/dev/null \
+    || command -v /usr/bin/cloud-localds 2>/dev/null \
+    || command -v /usr/local/bin/cloud-localds 2>/dev/null) \
+    || { echo "ERROR: cloud-localds not found — install cloud-image-utils"; exit 1; }
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
@@ -31,11 +37,11 @@ BASE_IMAGE="/var/lib/libvirt/images/ubuntu-22.04-server-cloudimg-amd64.img"
 DISK_SIZE="10G"
 RAM_MB=1024
 VCPUS=2
-NETWORK="default"
+NETWORK="br0"
 IMAGE_DIR="/var/lib/libvirt/images"
 
 usage() {
-    echo "Usage: $0 [--count N] [--name-prefix PREFIX] [--type service-a|service-b] [--base-image PATH]"
+    echo "Usage: $0 [--count N] [--name-prefix PREFIX] [--type service-a|service-b] [--base-image PATH] [--network BRIDGE]"
     exit 1
 }
 
@@ -45,6 +51,7 @@ while [[ $# -gt 0 ]]; do
         --name-prefix) NAME_PREFIX="$2"; shift 2 ;;
         --type)        TYPE="$2";        shift 2 ;;
         --base-image)  BASE_IMAGE="$2";  shift 2 ;;
+        --network)     NETWORK="$2";     shift 2 ;;
         *) usage ;;
     esac
 done
@@ -77,7 +84,7 @@ for i in $(seq 1 "${COUNT}"); do
         qemu-img create -f qcow2 -b "${BASE_IMAGE}" -F qcow2 "${DISK}" "${DISK_SIZE}"
     fi
 
-    cloud-localds "${CIDATA}" "${CLOUD_INIT_USERDATA}" "${CLOUD_INIT_META}"
+    "${CLOUD_LOCALDS}" "${CIDATA}" "${CLOUD_INIT_USERDATA}" "${CLOUD_INIT_META}"
 
     virt-install \
         --name "${NAME}" \
@@ -86,7 +93,7 @@ for i in $(seq 1 "${COUNT}"); do
         --disk "${DISK},format=qcow2" \
         --disk "${CIDATA},device=cdrom" \
         --os-variant ubuntu22.04 \
-        --network network="${NETWORK}" \
+        --network bridge="${NETWORK}" \
         --graphics none \
         --console pty,target_type=serial \
         --noautoconsole \
