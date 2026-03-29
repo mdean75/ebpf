@@ -42,6 +42,29 @@ log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "${RESULTS_DIR}/experiment.log"; 
 # SSH helper for VM 0
 vm_a() { ssh "${SSH_USER}@${VM_A}" "$@"; }
 
+# get_tap_for_ip <ip>
+# Returns the host tap interface for the KVM VM with the given IP.
+# tc rules must go on the tap interface (not the bridge) — bridged VM-to-VM
+# traffic bypasses the bridge's egress qdisc, same as Docker.
+# Falls back to BRIDGE if the tap cannot be determined.
+get_tap_for_ip() {
+    local target_ip="$1"
+    local vm tap ip
+    for vm in $(virsh list --name 2>/dev/null); do
+        ip=$(virsh domifaddr "${vm}" --source arp 2>/dev/null \
+            | awk '/ipv4/{print $4}' | cut -d/ -f1 | head -1)
+        if [[ "${ip}" == "${target_ip}" ]]; then
+            tap=$(virsh domiflist "${vm}" 2>/dev/null \
+                | awk '!/^-/ && !/Interface/ && NF>=3 {print $1}' | head -1)
+            if [[ -n "${tap}" ]]; then
+                echo "${tap}"
+                return
+            fi
+        fi
+    done
+    echo "${BRIDGE}"
+}
+
 # ----------------------------------------------------------------------------
 # Pre-experiment checks
 # ----------------------------------------------------------------------------
@@ -93,6 +116,13 @@ stop_service_a() {
             kill \$(cat /tmp/service-a.pid) 2>/dev/null || true
             rm -f /tmp/service-a.pid
         fi
+        # Also catch any orphaned instance (e.g. from a previous failed run)
+        pkill -f /usr/local/bin/service-a 2>/dev/null || true
+        # Wait for port 2112 to be released before returning
+        for i in \$(seq 1 15); do
+            ss -tlnp 2>/dev/null | grep -q ':2112' || break
+            sleep 1
+        done
     "
     # Copy log back to results
     local LOG_DEST="$1"
@@ -121,16 +151,20 @@ run_scenario() {
     sleep 10
 
     if [[ -n "${FAULT_ARGS}" && -n "${TARGET_VM}" ]]; then
-        log "t=10: injecting fault on ${TARGET_VM}: ${FAULT_ARGS}"
+        local IFACE
+        IFACE=$(get_tap_for_ip "${TARGET_VM}")
+        log "t=10: injecting fault on ${TARGET_VM} via ${IFACE}: ${FAULT_ARGS}"
         # shellcheck disable=SC2086
-        sudo "${BIN}/fault-injector" inject --iface "${BRIDGE}" --target "${TARGET_VM}" ${FAULT_ARGS}
+        sudo "${BIN}/fault-injector" inject --iface "${IFACE}" --target "${TARGET_VM}" ${FAULT_ARGS}
     fi
 
     sleep 30
 
     if [[ -n "${FAULT_ARGS}" && -n "${TARGET_VM}" ]]; then
-        log "t=40: clearing fault on ${TARGET_VM}"
-        sudo "${BIN}/fault-injector" clear --iface "${BRIDGE}" --target "${TARGET_VM}"
+        local IFACE
+        IFACE=$(get_tap_for_ip "${TARGET_VM}")
+        log "t=40: clearing fault on ${TARGET_VM} via ${IFACE}"
+        sudo "${BIN}/fault-injector" clear --iface "${IFACE}" --target "${TARGET_VM}"
     fi
 
     sleep 20
