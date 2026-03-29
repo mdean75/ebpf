@@ -39,7 +39,7 @@ VM_ADDRESSES=$(printf '%s:443,' "${VMS[@]}" | sed 's/,$//')
 mkdir -p "${RESULTS_DIR}"
 echo "Results: ${RESULTS_DIR}"
 
-log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "${RESULTS_DIR}/experiment.log"; }
+log() { echo "[$(date +%H:%M:%S.%3N)] $*" | tee -a "${RESULTS_DIR}/experiment.log"; }
 
 # SSH helper for VM 0
 vm_a() { ssh ${SSH_OPTS} "${SSH_USER}@${VM_A}" "$@"; }
