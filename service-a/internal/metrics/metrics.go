@@ -11,10 +11,29 @@ var (
 		Help: "Total messages sent per stream.",
 	}, []string{"addr"})
 
+	// MessagesLost counts messages that were never successfully delivered.
+	// reason: "timeout"    — no response within lossDeadline (3s)
+	//         "queue_full" — send queue saturated, message dropped before send
+	//         "abandoned"  — message was in-flight when stream disconnected
 	MessagesLost = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "service_a_messages_lost_total",
-		Help: "Messages sent with no response within the deadline, per stream.",
-	}, []string{"addr"})
+		Help: "Messages lost per stream, by reason (timeout|queue_full|abandoned).",
+	}, []string{"addr", "reason"})
+
+	// MessagesRerouted counts messages routed to an alternate stream because
+	// the round-robin candidate was degraded or dead. Labeled by the skipped
+	// stream so you can see how many messages were diverted away from each VM.
+	MessagesRerouted = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "service_a_messages_rerouted_total",
+		Help: "Messages sent to an alternate stream because the primary was degraded/dead.",
+	}, []string{"skipped_addr"})
+
+	// MessagesDropped counts messages that were not sent because every stream
+	// was simultaneously dead (Next() returned "").
+	MessagesDropped = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "service_a_messages_dropped_total",
+		Help: "Messages discarded because all streams were unavailable.",
+	})
 
 	ResponseLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "service_a_response_latency_seconds",
@@ -29,6 +48,6 @@ var (
 
 	Reroutes = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "service_a_reroutes_total",
-		Help: "Number of times a message was rerouted away from a stream.",
+		Help: "Number of stream state transitions to degraded/dead, per stream.",
 	}, []string{"addr", "reason"})
 )

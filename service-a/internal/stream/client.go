@@ -72,7 +72,7 @@ func (c *Client) Send(msg *pb.Message) {
 	case c.sendCh <- msg:
 		metrics.MessagesSent.WithLabelValues(c.address).Inc()
 	default:
-		metrics.MessagesLost.WithLabelValues(c.address).Inc()
+		metrics.MessagesLost.WithLabelValues(c.address, "queue_full").Inc()
 		log.Printf("stream %s: send queue full, dropping msg id=%s", c.address, msg.Id)
 	}
 }
@@ -145,8 +145,9 @@ func (c *Client) runStream() error {
 	metrics.StreamHealth.WithLabelValues(c.address).Set(0)
 	log.Printf("stream %s: connected", c.address)
 
-	// Clear stale in-flight entries from the previous stream
+	// Clear stale in-flight entries from the previous stream; count as abandoned.
 	c.inFlight.Range(func(k, _ any) bool {
+		metrics.MessagesLost.WithLabelValues(c.address, "abandoned").Inc()
 		c.inFlight.Delete(k)
 		return true
 	})
@@ -281,7 +282,7 @@ func (c *Client) lossCheckLoop(ctx context.Context) {
 			c.inFlight.Range(func(k, v any) bool {
 				inf := v.(*inFlight)
 				if !inf.isHeartbeat && now.Sub(inf.sentAt) > lossDeadline {
-					metrics.MessagesLost.WithLabelValues(c.address).Inc()
+					metrics.MessagesLost.WithLabelValues(c.address, "timeout").Inc()
 					c.inFlight.Delete(k)
 				}
 				return true

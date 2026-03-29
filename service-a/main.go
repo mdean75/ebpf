@@ -11,6 +11,7 @@ import (
 	"github.com/mdean75/ebpf-grpc-experiment/service-a/config"
 	"github.com/mdean75/ebpf-grpc-experiment/service-a/internal/balancer"
 	"github.com/mdean75/ebpf-grpc-experiment/service-a/internal/ebpfpoller"
+	"github.com/mdean75/ebpf-grpc-experiment/service-a/internal/metrics"
 	sstream "github.com/mdean75/ebpf-grpc-experiment/service-a/internal/stream"
 	pb "github.com/mdean75/ebpf-grpc-experiment/proto/stream"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -86,9 +87,13 @@ func messageGenerator(bal *balancer.Balancer, clients []*sstream.Client, cfg con
 	payload := make([]byte, 256) // fixed 256-byte payload
 
 	for range ticker.C {
-		addr := bal.Next()
+		addr, skipped := bal.Next()
 		if addr == "" {
-			continue // all streams down
+			metrics.MessagesDropped.Inc()
+			continue
+		}
+		for _, s := range skipped {
+			metrics.MessagesRerouted.WithLabelValues(s).Inc()
 		}
 		c := clientByAddr[addr]
 		c.Send(&pb.Message{

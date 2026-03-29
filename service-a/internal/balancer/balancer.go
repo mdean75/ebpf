@@ -71,22 +71,24 @@ func New(addresses []string, mode Mode) *Balancer {
 	}
 }
 
-// Next returns the next routable address in round-robin order, skipping streams
-// that are not routable in the current mode. Returns "" if all streams are down.
-func (b *Balancer) Next() string {
+// Next returns the next routable address in round-robin order and the list of
+// addresses that were skipped (degraded or dead in the current mode).
+// addr is "" and skipped is nil if all streams are down.
+func (b *Balancer) Next() (addr string, skipped []string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	n := len(b.keys)
 	for range n {
-		addr := b.keys[b.idx%n]
+		a := b.keys[b.idx%n]
 		b.idx++
-		s := b.streams[addr]
+		s := b.streams[a]
 		if b.routable(s.Health) {
-			return addr
+			return a, skipped
 		}
+		skipped = append(skipped, a)
 	}
-	return ""
+	return "", nil
 }
 
 func (b *Balancer) routable(h StreamHealth) bool {
