@@ -17,6 +17,7 @@ import (
 )
 
 func main() {
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 	cfg := config.Load()
 
 	if len(cfg.VMAddresses) == 0 {

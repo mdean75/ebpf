@@ -115,13 +115,14 @@ func TestDecay_ScoreReachesZero(t *testing.T) {
 	tr := New()
 	tr.Record(ConnEvent{Key: testKey, EventType: EventRetransmit}) // score = 0.1
 
-	// Simulate 10s of decay — score should reach 0
+	// Simulate 10s of decay — score should reach 0, entry should be pruned.
 	tr.lastDecay = time.Now().Add(-10 * time.Second)
 	tr.Decay()
 
+	// A fully-decayed, healthy entry is removed from the tracker immediately.
 	h := tr.Get(testKey)
-	if h.Score != 0 {
-		t.Errorf("expected score=0 after sufficient decay, got %.3f", h.Score)
+	if h != nil && h.Score != 0 {
+		t.Errorf("expected score=0 or pruned entry after sufficient decay, got %.3f", h.Score)
 	}
 }
 

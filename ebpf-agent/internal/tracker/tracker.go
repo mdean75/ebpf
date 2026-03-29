@@ -148,11 +148,12 @@ func (t *Tracker) Decay() {
 	const decayPerSecond = 0.05
 	decay := decayPerSecond * elapsed
 
-	// Prune stale entries: connections not updated in >30s have closed.
-	// Without pruning, old entries (different source port, same VM IP) from
-	// prior runs stay at score=0 and cause healthy/degraded oscillation in
-	// the poller, which matches by destination IP across all entries.
-	const staleThreshold = 30 * time.Second
+	// Prune stale entries: connections not updated in >15s have closed.
+	// 15s is safe at 200 msg/s (events arrive every few ms on an active stream).
+	// Without pruning, old entries from prior runs with the same VM IP but a
+	// different source port linger and cause false positives when service-a
+	// restarts and the poller matches on destination IP across all entries.
+	const staleThreshold = 15 * time.Second
 
 	for key, h := range t.conns {
 		if now.Sub(h.UpdatedAt) > staleThreshold {
@@ -166,6 +167,11 @@ func (t *Tracker) Decay() {
 		// The 0.25 gap prevents re-oscillation when score hovers near 0.5.
 		if h.Degraded && h.Score < 0.25 {
 			h.Degraded = false
+		}
+		// Prune fully-recovered entries immediately — no need to retain a
+		// score=0 healthy entry; if the connection re-appears it starts fresh.
+		if h.Score == 0 && !h.Degraded {
+			delete(t.conns, key)
 		}
 	}
 }

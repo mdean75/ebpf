@@ -254,7 +254,10 @@ func (c *Client) heartbeatLoop(stream pb.StreamService_BiDiStreamClient, ctx con
 				select {
 				case <-timer.C:
 					if _, pending := c.inFlight.LoadAndDelete(capturedID); pending {
-						log.Printf("stream %s: heartbeat timeout (id=%s)", c.address, capturedID)
+						// Only log the first timeout — suppress noise once already dead.
+						if c.bal.GetHealth(c.address) != balancer.Dead {
+							log.Printf("stream %s: heartbeat timeout (id=%s)", c.address, capturedID)
+						}
 						c.bal.SetHealth(c.address, balancer.Dead, "heartbeat_timeout")
 						metrics.StreamHealth.WithLabelValues(c.address).Set(2)
 					}

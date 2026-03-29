@@ -19,6 +19,7 @@ import (
 )
 
 func main() {
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 	cfg := loadConfig()
 	log.Printf("ebpf-agent starting: target_port=%d cgroup=%s", cfg.TargetPort, cfg.CgroupPath)
 
