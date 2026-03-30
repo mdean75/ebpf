@@ -30,8 +30,9 @@ func (h StreamHealth) String() string {
 type Mode string
 
 const (
-	ModeEBPF     Mode = "ebpf"
-	ModeBaseline Mode = "baseline"
+	ModeEBPF       Mode = "ebpf"
+	ModeBaseline   Mode = "baseline"
+	ModeProtopulse Mode = "protopulse"
 )
 
 type StreamState struct {
@@ -98,6 +99,7 @@ func (b *Balancer) routable(h StreamHealth) bool {
 	case Degraded:
 		// In baseline mode we still route to degraded streams — only the
 		// heartbeat timeout will eventually mark them Dead.
+		// In ebpf and protopulse modes, degraded streams are skipped.
 		return b.mode == ModeBaseline
 	default:
 		return false

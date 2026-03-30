@@ -12,6 +12,7 @@ import (
 	"github.com/mdean75/ebpf-grpc-experiment/service-a/internal/balancer"
 	"github.com/mdean75/ebpf-grpc-experiment/service-a/internal/ebpfpoller"
 	"github.com/mdean75/ebpf-grpc-experiment/service-a/internal/metrics"
+	"github.com/mdean75/ebpf-grpc-experiment/service-a/internal/protopulsepoller"
 	sstream "github.com/mdean75/ebpf-grpc-experiment/service-a/internal/stream"
 	pb "github.com/mdean75/ebpf-grpc-experiment/proto/stream"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -24,8 +25,8 @@ func main() {
 	if len(cfg.VMAddresses) == 0 {
 		log.Fatal("VM_ADDRESSES is required (comma-separated list of host:port)")
 	}
-	if cfg.LBMode != "ebpf" && cfg.LBMode != "baseline" {
-		log.Fatalf("LB_MODE must be 'ebpf' or 'baseline', got %q", cfg.LBMode)
+	if cfg.LBMode != "ebpf" && cfg.LBMode != "baseline" && cfg.LBMode != "protopulse" {
+		log.Fatalf("LB_MODE must be 'ebpf', 'baseline', or 'protopulse', got %q", cfg.LBMode)
 	}
 
 	mode := balancer.Mode(cfg.LBMode)
@@ -43,8 +44,17 @@ func main() {
 
 	// eBPF agent health watcher — push-based gRPC stream
 	// (only acts in ebpf mode, but always connected so mode switches take effect immediately)
-	poller := ebpfpoller.New(cfg.EBPFAgentGRPCAddr, bal, cfg.VMAddresses)
-	go poller.Start()
+	ebpfWatcher := ebpfpoller.New(cfg.EBPFAgentGRPCAddr, bal, cfg.VMAddresses)
+	go ebpfWatcher.Start()
+
+	// Protopulse poller — /proc/net/tcp polling with EMA scoring
+	// (only acts in protopulse mode; uses same routing rules as eBPF)
+	ppClients := make([]protopulsepoller.StreamClient, len(clients))
+	for i, c := range clients {
+		ppClients[i] = c
+	}
+	ppPoller := protopulsepoller.New(bal, ppClients, cfg.ProtopulsePollInterval)
+	go ppPoller.Start()
 
 	// Message generator: produce MessagesPerSecond across healthy streams
 	go messageGenerator(bal, clients, cfg)
@@ -64,7 +74,8 @@ func main() {
 	<-sig
 	log.Println("shutting down")
 
-	poller.Stop()
+	ebpfWatcher.Stop()
+	ppPoller.Stop()
 	for _, c := range clients {
 		c.Stop()
 	}

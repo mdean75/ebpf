@@ -244,35 +244,42 @@ run_scenario() {
 }
 
 # ----------------------------------------------------------------------------
-# Run 1 — Baseline (no faults, both modes)
+# Run 1 — Baseline (no faults, all three modes)
 # ----------------------------------------------------------------------------
-run_scenario "run1-baseline" "baseline" "" ""
-run_scenario "run1-baseline" "ebpf"     "" ""
+run_scenario "run1-baseline" "baseline"   "" ""
+run_scenario "run1-baseline" "ebpf"       "" ""
+run_scenario "run1-baseline" "protopulse" "" ""
 
 # ----------------------------------------------------------------------------
 # Run 2 — Packet loss 5% on VM1 (a service-b VM)
 # ----------------------------------------------------------------------------
-run_scenario "run2-packetloss" "baseline" "${VM1}" "--mode packet-loss --rate 5"
-run_scenario "run2-packetloss" "ebpf"     "${VM1}" "--mode packet-loss --rate 5"
+run_scenario "run2-packetloss" "baseline"   "${VM1}" "--mode packet-loss --rate 5"
+run_scenario "run2-packetloss" "ebpf"       "${VM1}" "--mode packet-loss --rate 5"
+run_scenario "run2-packetloss" "protopulse" "${VM1}" "--mode packet-loss --rate 5"
 
 # ----------------------------------------------------------------------------
 # Run 3 — Latency spike on VM1
 # ----------------------------------------------------------------------------
-run_scenario "run3-latency" "baseline" "${VM1}" "--mode latency --delay 200ms --jitter 50ms"
-run_scenario "run3-latency" "ebpf"     "${VM1}" "--mode latency --delay 200ms --jitter 50ms"
+run_scenario "run3-latency" "baseline"   "${VM1}" "--mode latency --delay 200ms --jitter 50ms"
+run_scenario "run3-latency" "ebpf"       "${VM1}" "--mode latency --delay 200ms --jitter 50ms"
+run_scenario "run3-latency" "protopulse" "${VM1}" "--mode latency --delay 200ms --jitter 50ms"
 
 # ----------------------------------------------------------------------------
 # Run 4 — Complete disconnect on VM1
 # ----------------------------------------------------------------------------
-run_scenario "run4-disconnect" "baseline" "${VM1}" "--mode disconnect"
-run_scenario "run4-disconnect" "ebpf"     "${VM1}" "--mode disconnect"
+run_scenario "run4-disconnect" "baseline"   "${VM1}" "--mode disconnect"
+run_scenario "run4-disconnect" "ebpf"       "${VM1}" "--mode disconnect"
+run_scenario "run4-disconnect" "protopulse" "${VM1}" "--mode disconnect"
 
 # ----------------------------------------------------------------------------
 # Run 5 — Repeat Runs 2–4 on VM2 (confirms results are not VM-specific)
 # ----------------------------------------------------------------------------
-run_scenario "run5-packetloss" "ebpf" "${VM2}" "--mode packet-loss --rate 5"
-run_scenario "run5-latency"    "ebpf" "${VM2}" "--mode latency --delay 200ms --jitter 50ms"
-run_scenario "run5-disconnect" "ebpf" "${VM2}" "--mode disconnect"
+run_scenario "run5-packetloss" "ebpf"       "${VM2}" "--mode packet-loss --rate 5"
+run_scenario "run5-packetloss" "protopulse" "${VM2}" "--mode packet-loss --rate 5"
+run_scenario "run5-latency"    "ebpf"       "${VM2}" "--mode latency --delay 200ms --jitter 50ms"
+run_scenario "run5-latency"    "protopulse" "${VM2}" "--mode latency --delay 200ms --jitter 50ms"
+run_scenario "run5-disconnect" "ebpf"       "${VM2}" "--mode disconnect"
+run_scenario "run5-disconnect" "protopulse" "${VM2}" "--mode disconnect"
 
 # ----------------------------------------------------------------------------
 # Run 6 — Heavy packet loss (30%) on VM1
@@ -282,9 +289,11 @@ run_scenario "run5-disconnect" "ebpf" "${VM2}" "--mode disconnect"
 # (p≈2.7%) exhaust TCP's retransmit budget (~3s of exponential backoff) and
 # produce observable lost/timeout events. Baseline absorbs these silently;
 # eBPF detects and reroutes within ~500ms, reducing the loss window.
+# Protopulse detects via /proc/net/tcp polling (~600ms minimum with hysteresis).
 # ----------------------------------------------------------------------------
-run_scenario "run6-packetloss-heavy" "baseline" "${VM1}" "--mode packet-loss --rate 30"
-run_scenario "run6-packetloss-heavy" "ebpf"     "${VM1}" "--mode packet-loss --rate 30"
+run_scenario "run6-packetloss-heavy" "baseline"   "${VM1}" "--mode packet-loss --rate 30"
+run_scenario "run6-packetloss-heavy" "ebpf"       "${VM1}" "--mode packet-loss --rate 30"
+run_scenario "run6-packetloss-heavy" "protopulse" "${VM1}" "--mode packet-loss --rate 30"
 
 log ""
 log "=== All runs complete. Results in: ${RESULTS_DIR} ==="

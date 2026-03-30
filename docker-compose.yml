@@ -13,6 +13,11 @@
 #   - vm0 container runs both service-a and ebpf-agent
 #   - Bridge is named "ebpf-test" — use --iface ebpf-test with fault-injector
 #
+# LB_MODE accepts three values:
+#   - "baseline"   — heartbeat-only detection (2s timeout → Dead)
+#   - "ebpf"       — eBPF kernel event detection (retransmits, RTT spikes)
+#   - "protopulse" — /proc/net/tcp polling with EMA scoring (~600ms detection)
+#
 # Fault injection (containerized — works on Linux and macOS Docker Desktop):
 #   VM1_IP=$(docker inspect ebpf-experiment-vm1-1 \
 #              --format '{{(index .NetworkSettings.Networks "ebpf-experiment_ebpf-net").IPAddress}}')

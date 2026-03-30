@@ -12,22 +12,24 @@ type Config struct {
 	MessagesPerSecond  int
 	HeartbeatInterval  time.Duration
 	HeartbeatTimeout   time.Duration
-	LBMode             string // "ebpf" or "baseline"
+	LBMode             string // "ebpf", "baseline", or "protopulse"
 	EBPFAgentAddr      string // HTTP signal API (kept for debugging)
 	EBPFAgentGRPCAddr  string // gRPC health stream
 	TLSCACert          string
+	ProtopulsePollInterval time.Duration
 }
 
 func Load() Config {
 	return Config{
-		VMAddresses:       splitCSV(os.Getenv("VM_ADDRESSES")),
-		MessagesPerSecond: getInt("MESSAGES_PER_SECOND", 200),
-		HeartbeatInterval: getDuration("HEARTBEAT_INTERVAL", 500*time.Millisecond),
-		HeartbeatTimeout:  getDuration("HEARTBEAT_TIMEOUT", 2*time.Second),
-		LBMode:            getEnv("LB_MODE", "ebpf"),
-		EBPFAgentAddr:     getEnv("EBPF_AGENT_ADDR", "localhost:9090"),
-		EBPFAgentGRPCAddr: getEnv("EBPF_AGENT_GRPC_ADDR", "localhost:9092"),
-		TLSCACert:         os.Getenv("TLS_CA_CERT"),
+		VMAddresses:            splitCSV(os.Getenv("VM_ADDRESSES")),
+		MessagesPerSecond:      getInt("MESSAGES_PER_SECOND", 200),
+		HeartbeatInterval:      getDuration("HEARTBEAT_INTERVAL", 500*time.Millisecond),
+		HeartbeatTimeout:       getDuration("HEARTBEAT_TIMEOUT", 2*time.Second),
+		LBMode:                 getEnv("LB_MODE", "ebpf"),
+		EBPFAgentAddr:          getEnv("EBPF_AGENT_ADDR", "localhost:9090"),
+		EBPFAgentGRPCAddr:      getEnv("EBPF_AGENT_GRPC_ADDR", "localhost:9092"),
+		TLSCACert:              os.Getenv("TLS_CA_CERT"),
+		ProtopulsePollInterval: getDuration("PROTOPULSE_POLL_INTERVAL", 200*time.Millisecond),
 	}
 }
 

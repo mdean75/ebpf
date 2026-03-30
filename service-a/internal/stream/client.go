@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -48,6 +49,13 @@ type Client struct {
 	inFlight sync.Map // map[string]*inFlight
 	seq      atomic.Uint64
 
+	// connInfo stores the current connection's local/remote addresses for
+	// external consumers (e.g. protopulse poller).
+	connInfoMu sync.RWMutex
+	localPort  int
+	remoteIP   string
+	remotePort int
+
 	stopCh chan struct{}
 	wg     sync.WaitGroup
 }
@@ -80,6 +88,17 @@ func (c *Client) Send(msg *pb.Message) {
 // Address returns the VM address this client connects to.
 func (c *Client) Address() string {
 	return c.address
+}
+
+// ConnectionInfo returns the local port and remote IP/port of the active gRPC
+// connection. Returns ok=false if no connection is established yet.
+func (c *Client) ConnectionInfo() (localPort int, remoteIP string, remotePort int, ok bool) {
+	c.connInfoMu.RLock()
+	defer c.connInfoMu.RUnlock()
+	if c.localPort == 0 {
+		return 0, "", 0, false
+	}
+	return c.localPort, c.remoteIP, c.remotePort, true
 }
 
 // NextID returns a unique message ID scoped to this client.
@@ -292,11 +311,31 @@ func (c *Client) lossCheckLoop(ctx context.Context) {
 }
 
 func (c *Client) dial() (*grpc.ClientConn, error) {
+	// Custom dialer that captures the local address after connecting.
+	captureDialer := grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+		conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+		if err != nil {
+			return nil, err
+		}
+		if tcpAddr, ok := conn.LocalAddr().(*net.TCPAddr); ok {
+			c.connInfoMu.Lock()
+			c.localPort = tcpAddr.Port
+			c.connInfoMu.Unlock()
+		}
+		if tcpAddr, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
+			c.connInfoMu.Lock()
+			c.remoteIP = tcpAddr.IP.String()
+			c.remotePort = tcpAddr.Port
+			c.connInfoMu.Unlock()
+		}
+		return conn, nil
+	})
+
 	// No CA cert → plain gRPC without TLS (used for Docker testing where
 	// service-a connects directly to service-b with no nginx TLS proxy).
 	if c.caCert == "" {
 		//nolint:staticcheck
-		return grpc.Dial(c.address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		return grpc.Dial(c.address, grpc.WithTransportCredentials(insecure.NewCredentials()), captureDialer)
 	}
 
 	pool := x509.NewCertPool()
@@ -309,5 +348,5 @@ func (c *Client) dial() (*grpc.ClientConn, error) {
 	}
 	tlsCfg := &tls.Config{RootCAs: pool}
 	//nolint:staticcheck
-	return grpc.Dial(c.address, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+	return grpc.Dial(c.address, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)), captureDialer)
 }
