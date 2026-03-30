@@ -1,5 +1,21 @@
 # eBPF Stream Health Detection — Solution Overview
 
+## Table of Contents
+
+1. [The Problem](#the-problem)
+2. [Why eBPF Can Detect This Faster](#why-ebpf-can-detect-this-faster)
+3. [How the Detection Works](#how-the-detection-works)
+4. [What the Agent Monitors — Connection Filtering](#what-the-agent-monitors--connection-filtering)
+5. [Connection-Level vs Stream-Level Visibility](#connection-level-vs-stream-level-visibility)
+6. [Why the BPF Programs Are Written in C](#why-the-bpf-programs-are-written-in-c)
+7. [Comparison with Userspace TCP Monitoring](#comparison-with-userspace-tcp-monitoring)
+8. [Deployment, Loading, and Integration](#deployment-loading-and-integration)
+9. [Measured Results](#measured-results)
+10. [CPU and Memory Overhead](#cpu-and-memory-overhead)
+11. [What This Does Not Replace](#what-this-does-not-replace)
+
+---
+
 ## The Problem
 
 In production, gRPC streaming connections can enter a **black hole** state: the TCP connection remains open and appears healthy to both endpoints, but all packets are silently dropped somewhere in the network path. No RST or FIN is sent. The client has no immediate indication anything is wrong.
@@ -90,6 +106,24 @@ If tighter scoping were needed, there are two options:
 
 For the current use case — a dedicated VM where service-a is the primary workload — port-based filtering is sufficient and keeps the BPF programs simple.
 
+### How the Destination IP Disambiguates Connections
+
+Port filtering determines which connections to watch — it does not identify which specific connection is having trouble. That is the role of the destination IP. Both service-b VMs listen on port 443, but they have different IP addresses. Every BPF event carries the full 4-tuple (source IP, destination IP, source port, destination port), so the tracker maintains completely independent health state for each backend. When a degradation is detected and pushed to service-a, the destination IP in the notification tells service-a exactly which backend to reroute away from — the other backend continues receiving traffic normally.
+
+### Multiple Instances Connecting to Overlapping Backends
+
+If multiple instances of service-a run on the same machine, each connecting to an overlapping set of backends, the system handles this correctly for network-level failures.
+
+Each connection from each instance to a shared backend is a distinct 4-tuple — same source and destination IP, same destination port, but a different ephemeral source port. The tracker scores each 4-tuple independently. All service-a instances subscribe to the same Watch stream from the agent. When a health event is pushed, each instance looks up the destination IP in its own configured server list and ignores events for backends it does not manage.
+
+If VM-A degrades, every instance configured for VM-A receives the notification and reroutes away from it. This is correct: a network-level failure — black hole, packet loss, path degradation — affects all connections to that destination from the same machine equally, regardless of which instance owns them.
+
+The current notification carries the destination IP rather than the full 4-tuple. If strict per-instance isolation were ever needed (for example, to avoid notifying Instance 2 about a problem specific to Instance 1's connection), the event pipeline could be extended to carry the source port and each instance would filter to only act on events matching its own open connections. For network-level failures this distinction is not meaningful and the added complexity is not warranted.
+
+### Port Is Not Hardcoded
+
+The target port is not compiled into the C programs. It is stored in a BPF map that the Go agent writes at startup after loading the programs. The C programs read it at runtime via a map lookup. The same pattern applies to the other tunables — RTT multiplier and unacked threshold. Changing the target port requires only a restart with a different `TARGET_PORT` environment variable, not a recompile.
+
 ---
 
 ## Connection-Level vs Stream-Level Visibility
@@ -115,6 +149,78 @@ If only one gRPC stream were misbehaving while others on the same connection wer
 Service-a maintains exactly one bidirectional streaming RPC per TCP connection — one stream per backend VM. Connection and stream are the same thing. The 4-tuple tracked by the agent maps directly to the one active gRPC stream, so there is no ambiguity.
 
 In a production deployment with many short-lived unary RPCs or multiple concurrent streaming RPCs to the same backend, the agent would report "the connection to this backend is degraded" — which remains the correct and actionable signal for network-layer failures.
+
+---
+
+## Why the BPF Programs Are Written in C
+
+The BPF programs must be written in C because they do not run as normal operating system processes — they run inside the Linux kernel's eBPF virtual machine, which has its own instruction set (BPF bytecode) and strict safety constraints. Getting code into that environment requires a compiler that targets BPF bytecode, and today the only mature compiler that does so is Clang, which compiles C.
+
+### Why Go and Java Cannot Be Used for BPF Programs
+
+Go and Java are incompatible with the kernel BPF environment at a fundamental level:
+
+- **Go** requires a goroutine scheduler, a garbage collector, and the ability to make OS syscalls freely. None of those exist inside a BPF program. The Go compiler also has no BPF target — there is no equivalent of `GOARCH=bpf`.
+- **Java** requires a JVM, heap management, and a full OS underneath it. BPF programs have a 512-byte stack limit, no heap, and can only call a restricted set of approved BPF helper functions — not arbitrary kernel or library code.
+
+The BPF verifier — the kernel component that checks every program before loading it — statically proves that each program terminates, never accesses invalid memory, and stays within these constraints. A language with a runtime (garbage collector, scheduler, dynamic allocation) is structurally unable to satisfy those proofs. C, written without dynamic allocation and with bounded loops, maps almost directly to BPF bytecode with no hidden runtime machinery, which is why it fits the model naturally.
+
+### The Compilation Pipeline
+
+```
+C source  ──►  Clang (-target bpf)  ──►  BPF ELF object (.o)
+                                               │
+                                        bpf2go embeds in Go binary
+                                               │
+                                        at agent startup:
+                                        bpf() syscall  ──►  kernel verifier  ──►  JIT  ──►  running
+```
+
+The BPF ELF object files are embedded directly inside the Go agent binary at compile time by `bpf2go`. There are no separate `.o` files to deploy or manage — just the agent binary. When the agent starts, it passes the embedded bytecode to the kernel via the `bpf()` syscall, the verifier checks it, and the kernel JIT-compiles it to native machine code.
+
+### The Division of Responsibility
+
+The C code is a narrow data-access layer, not where the logic lives. Each BPF program is 50–100 lines of C that does three things: check the destination port, read a few fields from the kernel TCP socket struct, and write a small event record to a ring buffer. All of the scoring, health state management, rerouting decisions, and gRPC communication are written in Go.
+
+This is a clean boundary: C is used only to bridge the gap between kernel memory and userspace. Everything above that boundary is standard Go.
+
+### Rust as an Alternative
+
+Rust is the one realistic alternative to C for BPF programs. The `aya` framework allows BPF programs to be written in Rust, which also compiles to BPF bytecode via LLVM. Rust's ownership model and lack of runtime make it compatible with the verifier's constraints in the same way C is. However, C with Clang remains the most mature and widely documented approach, and the BPF programs in this solution are small enough that the choice between C and Rust is not architecturally significant.
+
+---
+
+## Comparison with Userspace TCP Monitoring
+
+An alternative approach is a userspace library integrated directly into the application that polls TCP socket statistics — using `getsockopt(TCP_INFO)` on the application's own sockets, or reading from the Linux netlink `INET_DIAG` interface. The `TCP_INFO` struct exposes nearly the same data that the eBPF programs read from `tcp_sock`: retransmit counts, unACKed segments, RTT estimates, and RTO values. The data availability gap between the two approaches is smaller than it might appear. The meaningful differences are architectural.
+
+| Dimension | Userspace Library | eBPF Agent |
+|-----------|-------------------|------------|
+| Detection model | Poll on interval | Event-driven kernel hook |
+| Detection latency floor | Polling interval | ~nanoseconds from event |
+| Application integration | Required per language | None |
+| Privileges required | None (own sockets) | `CAP_BPF` + `CAP_NET_ADMIN` |
+| Kernel version requirement | Linux 2.4+ | Linux 5.8+ with BTF |
+| Missed events between samples | Possible | Not possible |
+| Event timestamps | Approximate (poll time) | Nanosecond precise |
+| OS portability | Any POSIX (Linux, macOS) | Linux only |
+| Polyglot support | Separate library per language | Any language via gRPC |
+
+### Detection Model
+
+The critical architectural difference is event-driven versus polling. The eBPF hook fires at the exact moment `packets_out` crosses the threshold. A library polls and sees a snapshot of what `tcpi_unacked` was the last time it checked. At a 100ms poll interval, the average detection lag from polling alone is 50ms. To match eBPF's detection speed the library would need to poll every 10–20ms, which is feasible but means a constant per-socket syscall overhead regardless of whether anything is wrong.
+
+### Application Coupling
+
+The eBPF agent is fully external — no application code changes are required, and it works for any language or framework. A library must be integrated into every client that needs it. For a polyglot environment with both Java and Go clients, that means two separate implementations to maintain, two sets of dependencies to version, and monitoring that is tied to the application deployment lifecycle. When the library needs updating, the application needs redeploying.
+
+### Where Each Approach Has an Advantage
+
+The userspace library approach has genuine advantages. It requires no special kernel privileges — a regular process can call `getsockopt` on its own sockets. It works on older kernels and non-Linux platforms, which matters during development. Because it lives inside the application process it has direct socket access with no IPC boundary.
+
+The strongest case for eBPF is a heterogeneous or polyglot environment: one agent on the host monitors all client processes regardless of language without requiring each team to integrate a library. The strongest case for the library approach is an environment with a strict security posture where `CAP_BPF` is not acceptable, or where older kernel versions are in use.
+
+For the specific failure mode this experiment addresses — a complete TCP black hole — both approaches eventually detect it. eBPF detects it faster (event-driven, ~25ms) without touching the application. A library polling at 10ms intervals could achieve similar latency at the cost of constant syscall overhead on every poll cycle even during healthy operation.
 
 ---
 
@@ -196,26 +302,10 @@ VM 0
       │
       └── Connects to agent :9092 via gRPC Watch stream
           No BPF dependency. Falls back to heartbeat if agent is down.
+
+VM 1, VM 2
+└── nginx + service-b — TLS termination and gRPC echo server (no agent needed)
 ```
-
----
-
-## Deployment
-
-```
-VM 0 (service-a VM)
-├── service-a        — gRPC client, message load balancer, Prometheus :2112
-└── ebpf-agent       — eBPF program loader, event processor
-    ├── BPF programs attached to kernel TCP hooks
-    ├── Signal API   :9090  (HTTP, for manual inspection)
-    ├── gRPC stream  :9092  (push notifications to service-a)
-    └── Prometheus   :9091  (metrics: retransmits, RTOs, RTT spikes, scores)
-
-VM 1, VM 2 (service-b VMs)
-└── nginx + service-b — TLS proxy + gRPC echo server
-```
-
-The eBPF agent runs on the same VM as service-a because it needs to observe the TCP connections that service-a is making. The BPF programs are attached to kernel-level hooks that fire for all TCP traffic on the machine — no changes to service-a, service-b, or nginx are required. The agent filters events by destination port (port 443 by default) to avoid noise from unrelated connections.
 
 ---
 
@@ -234,7 +324,7 @@ All measurements taken at 200 messages/second over 60-second runs with faults in
 
 **eBPF detects a black hole 50× faster than heartbeat timeout and reduces message loss by 97%.**
 
-For the heavy packet loss scenario, eBPF detection is 38× faster than the heartbeat, which only fails after multiple consecutive probe losses — a probabilistic event that varies between 4 and 20+ seconds depending on which specific packets netem drops.
+For the heavy packet loss scenario, eBPF detection is 38× faster than the heartbeat, which only fails after multiple consecutive probe losses — a probabilistic event that varies between 4 and 20+ seconds depending on which specific packets are dropped.
 
 ---
 
