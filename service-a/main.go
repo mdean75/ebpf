@@ -28,17 +28,23 @@ func main() {
 	if cfg.LBMode != "ebpf" && cfg.LBMode != "baseline" && cfg.LBMode != "protopulse" {
 		log.Fatalf("LB_MODE must be 'ebpf', 'baseline', or 'protopulse', got %q", cfg.LBMode)
 	}
+	if cfg.DeadDetection != "heartbeat" && cfg.DeadDetection != "keepalive" {
+		log.Fatalf("DEAD_DETECTION must be 'heartbeat' or 'keepalive', got %q", cfg.DeadDetection)
+	}
 
 	mode := balancer.Mode(cfg.LBMode)
 	bal := balancer.New(cfg.VMAddresses, mode)
-	log.Printf("starting service-a: %d VMs, mode=%s, rate=%d msg/s",
-		len(cfg.VMAddresses), mode, cfg.MessagesPerSecond)
+	log.Printf("starting service-a: %d VMs, mode=%s, dead-detection=%s, rate=%d msg/s",
+		len(cfg.VMAddresses), mode, cfg.DeadDetection, cfg.MessagesPerSecond)
+
+	keepaliveMode := cfg.DeadDetection == "keepalive"
 
 	// One stream client per VM
 	clients := make([]*sstream.Client, len(cfg.VMAddresses))
 	for i, addr := range cfg.VMAddresses {
 		clients[i] = sstream.NewClient(addr, bal,
-			cfg.HeartbeatInterval, cfg.HeartbeatTimeout, cfg.TLSCACert)
+			cfg.HeartbeatInterval, cfg.HeartbeatTimeout, cfg.TLSCACert,
+			keepaliveMode, cfg.KeepaliveTime, cfg.KeepaliveTimeout)
 		go clients[i].Start()
 	}
 

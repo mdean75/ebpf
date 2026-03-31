@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
 const (
@@ -45,6 +46,10 @@ type Client struct {
 	heartbeatInterval time.Duration
 	heartbeatTimeout  time.Duration
 
+	keepaliveMode    bool
+	keepaliveTime    time.Duration
+	keepaliveTimeout time.Duration
+
 	sendCh   chan *pb.Message
 	inFlight sync.Map // map[string]*inFlight
 	seq      atomic.Uint64
@@ -60,13 +65,17 @@ type Client struct {
 	wg     sync.WaitGroup
 }
 
-func NewClient(addr string, bal *balancer.Balancer, hbInterval, hbTimeout time.Duration, caCert string) *Client {
+func NewClient(addr string, bal *balancer.Balancer, hbInterval, hbTimeout time.Duration, caCert string,
+	keepaliveMode bool, kTime, kTimeout time.Duration) *Client {
 	return &Client{
 		address:           addr,
 		bal:               bal,
 		caCert:            caCert,
 		heartbeatInterval: hbInterval,
 		heartbeatTimeout:  hbTimeout,
+		keepaliveMode:     keepaliveMode,
+		keepaliveTime:     kTime,
+		keepaliveTimeout:  kTimeout,
 		sendCh:            make(chan *pb.Message, sendQueueDepth),
 		stopCh:            make(chan struct{}),
 	}
@@ -186,11 +195,13 @@ func (c *Client) runStream() error {
 		errCh <- c.recvLoop(stream)
 	}()
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		c.heartbeatLoop(stream, ctx)
-	}()
+	if !c.keepaliveMode {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.heartbeatLoop(stream, ctx)
+		}()
+	}
 
 	wg.Add(1)
 	go func() {
@@ -334,8 +345,16 @@ func (c *Client) dial() (*grpc.ClientConn, error) {
 	// No CA cert → plain gRPC without TLS (used for Docker testing where
 	// service-a connects directly to service-b with no nginx TLS proxy).
 	if c.caCert == "" {
+		opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials()), captureDialer}
+		if c.keepaliveMode {
+			opts = append(opts, grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:                c.keepaliveTime,
+				Timeout:             c.keepaliveTimeout,
+				PermitWithoutStream: true,
+			}))
+		}
 		//nolint:staticcheck
-		return grpc.Dial(c.address, grpc.WithTransportCredentials(insecure.NewCredentials()), captureDialer)
+		return grpc.Dial(c.address, opts...)
 	}
 
 	pool := x509.NewCertPool()
@@ -347,6 +366,14 @@ func (c *Client) dial() (*grpc.ClientConn, error) {
 		return nil, fmt.Errorf("parse CA cert failed")
 	}
 	tlsCfg := &tls.Config{RootCAs: pool}
+	opts := []grpc.DialOption{grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)), captureDialer}
+	if c.keepaliveMode {
+		opts = append(opts, grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                c.keepaliveTime,
+			Timeout:             c.keepaliveTimeout,
+			PermitWithoutStream: true,
+		}))
+	}
 	//nolint:staticcheck
-	return grpc.Dial(c.address, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)), captureDialer)
+	return grpc.Dial(c.address, opts...)
 }

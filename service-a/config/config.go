@@ -17,6 +17,9 @@ type Config struct {
 	EBPFAgentGRPCAddr  string // gRPC health stream
 	TLSCACert          string
 	ProtopulsePollInterval time.Duration
+	DeadDetection      string        // "heartbeat" (default) or "keepalive"
+	KeepaliveTime      time.Duration // gRPC keepalive ping interval (keepalive mode only)
+	KeepaliveTimeout   time.Duration // gRPC keepalive ping timeout (keepalive mode only)
 }
 
 func Load() Config {
@@ -30,6 +33,9 @@ func Load() Config {
 		EBPFAgentGRPCAddr:      getEnv("EBPF_AGENT_GRPC_ADDR", "localhost:9092"),
 		TLSCACert:              os.Getenv("TLS_CA_CERT"),
 		ProtopulsePollInterval: getDuration("PROTOPULSE_POLL_INTERVAL", 200*time.Millisecond),
+		DeadDetection:          getEnv("DEAD_DETECTION", "heartbeat"),
+		KeepaliveTime:          getDuration("KEEPALIVE_TIME", 10*time.Second),
+		KeepaliveTimeout:       getDuration("KEEPALIVE_TIMEOUT", 5*time.Second),
 	}
 }
 

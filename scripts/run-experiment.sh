@@ -106,10 +106,11 @@ log "Pre-experiment checks passed"
 # ----------------------------------------------------------------------------
 start_service_a() {
     local MODE="$1"
+    local DEAD_DETECTION="${2:-heartbeat}"
     # Pipe script via heredoc — avoids the SSH multi-argument quoting issue
     # where 'ssh host bash -c "..."' passes a newline-prefixed string that
     # breaks bash's -c argument parsing.
-    # Variables expanded locally (MODE, VM_ADDRESSES); remote vars use single backslash.
+    # Variables expanded locally (MODE, VM_ADDRESSES, DEAD_DETECTION); remote vars use single backslash.
     ssh ${SSH_OPTS} "${SSH_USER}@${VM_A}" bash << REMOTE
 pkill -f /usr/local/bin/service-a 2>/dev/null || true
 sleep 0.5
@@ -118,9 +119,10 @@ VM_ADDRESSES=${VM_ADDRESSES} \
 TLS_CA_CERT=/etc/service-a/ca.crt \
 EBPF_AGENT_ADDR=localhost:9090 \
 EBPF_AGENT_GRPC_ADDR=localhost:9092 \
+DEAD_DETECTION=${DEAD_DETECTION} \
 nohup /usr/local/bin/service-a > /tmp/service-a.log 2>&1 &
 echo \$! > /tmp/service-a.pid
-echo "service-a started (mode=${MODE})"
+echo "service-a started (mode=${MODE}, dead-detection=${DEAD_DETECTION})"
 REMOTE
 }
 
@@ -205,13 +207,16 @@ run_scenario() {
     local LB_MODE="$2"
     local TARGET_VM="$3"
     local FAULT_ARGS="${4:-}"
-    local RUN_DIR="${RESULTS_DIR}/${RUN_NAME}-${LB_MODE}"
+    local DEAD_DETECTION="${5:-heartbeat}"
+    local SUFFIX=""
+    [[ "${DEAD_DETECTION}" != "heartbeat" ]] && SUFFIX="-${DEAD_DETECTION}"
+    local RUN_DIR="${RESULTS_DIR}/${RUN_NAME}-${LB_MODE}${SUFFIX}"
 
     mkdir -p "${RUN_DIR}"
     log ""
-    log "=== ${RUN_NAME} (mode=${LB_MODE}, target=${TARGET_VM:-none}) ==="
+    log "=== ${RUN_NAME} (mode=${LB_MODE}, dead-detection=${DEAD_DETECTION}, target=${TARGET_VM:-none}) ==="
 
-    start_service_a "${LB_MODE}" "${RUN_DIR}/service-a.log"
+    start_service_a "${LB_MODE}" "${DEAD_DETECTION}"
     log "service-a started on VM 0"
     sleep 5
 
@@ -249,6 +254,9 @@ run_scenario() {
 run_scenario "run1-baseline" "baseline"   "" ""
 run_scenario "run1-baseline" "ebpf"       "" ""
 run_scenario "run1-baseline" "protopulse" "" ""
+run_scenario "run1-baseline" "baseline"   "" "" "keepalive"
+run_scenario "run1-baseline" "ebpf"       "" "" "keepalive"
+run_scenario "run1-baseline" "protopulse" "" "" "keepalive"
 
 # ----------------------------------------------------------------------------
 # Run 2 — Packet loss 5% on VM1 (a service-b VM)
@@ -256,6 +264,9 @@ run_scenario "run1-baseline" "protopulse" "" ""
 run_scenario "run2-packetloss" "baseline"   "${VM1}" "--mode packet-loss --rate 5"
 run_scenario "run2-packetloss" "ebpf"       "${VM1}" "--mode packet-loss --rate 5"
 run_scenario "run2-packetloss" "protopulse" "${VM1}" "--mode packet-loss --rate 5"
+run_scenario "run2-packetloss" "baseline"   "${VM1}" "--mode packet-loss --rate 5" "keepalive"
+run_scenario "run2-packetloss" "ebpf"       "${VM1}" "--mode packet-loss --rate 5" "keepalive"
+run_scenario "run2-packetloss" "protopulse" "${VM1}" "--mode packet-loss --rate 5" "keepalive"
 
 # ----------------------------------------------------------------------------
 # Run 3 — Latency spike on VM1
@@ -263,6 +274,9 @@ run_scenario "run2-packetloss" "protopulse" "${VM1}" "--mode packet-loss --rate 
 run_scenario "run3-latency" "baseline"   "${VM1}" "--mode latency --delay 200ms --jitter 50ms"
 run_scenario "run3-latency" "ebpf"       "${VM1}" "--mode latency --delay 200ms --jitter 50ms"
 run_scenario "run3-latency" "protopulse" "${VM1}" "--mode latency --delay 200ms --jitter 50ms"
+run_scenario "run3-latency" "baseline"   "${VM1}" "--mode latency --delay 200ms --jitter 50ms" "keepalive"
+run_scenario "run3-latency" "ebpf"       "${VM1}" "--mode latency --delay 200ms --jitter 50ms" "keepalive"
+run_scenario "run3-latency" "protopulse" "${VM1}" "--mode latency --delay 200ms --jitter 50ms" "keepalive"
 
 # ----------------------------------------------------------------------------
 # Run 4 — Complete disconnect on VM1
@@ -270,6 +284,9 @@ run_scenario "run3-latency" "protopulse" "${VM1}" "--mode latency --delay 200ms 
 run_scenario "run4-disconnect" "baseline"   "${VM1}" "--mode disconnect"
 run_scenario "run4-disconnect" "ebpf"       "${VM1}" "--mode disconnect"
 run_scenario "run4-disconnect" "protopulse" "${VM1}" "--mode disconnect"
+run_scenario "run4-disconnect" "baseline"   "${VM1}" "--mode disconnect" "keepalive"
+run_scenario "run4-disconnect" "ebpf"       "${VM1}" "--mode disconnect" "keepalive"
+run_scenario "run4-disconnect" "protopulse" "${VM1}" "--mode disconnect" "keepalive"
 
 # ----------------------------------------------------------------------------
 # Run 5 — Repeat Runs 2–4 on VM2 (confirms results are not VM-specific)
@@ -280,6 +297,12 @@ run_scenario "run5-latency"    "ebpf"       "${VM2}" "--mode latency --delay 200
 run_scenario "run5-latency"    "protopulse" "${VM2}" "--mode latency --delay 200ms --jitter 50ms"
 run_scenario "run5-disconnect" "ebpf"       "${VM2}" "--mode disconnect"
 run_scenario "run5-disconnect" "protopulse" "${VM2}" "--mode disconnect"
+run_scenario "run5-packetloss" "ebpf"       "${VM2}" "--mode packet-loss --rate 5" "keepalive"
+run_scenario "run5-packetloss" "protopulse" "${VM2}" "--mode packet-loss --rate 5" "keepalive"
+run_scenario "run5-latency"    "ebpf"       "${VM2}" "--mode latency --delay 200ms --jitter 50ms" "keepalive"
+run_scenario "run5-latency"    "protopulse" "${VM2}" "--mode latency --delay 200ms --jitter 50ms" "keepalive"
+run_scenario "run5-disconnect" "ebpf"       "${VM2}" "--mode disconnect" "keepalive"
+run_scenario "run5-disconnect" "protopulse" "${VM2}" "--mode disconnect" "keepalive"
 
 # ----------------------------------------------------------------------------
 # Run 6 — Heavy packet loss (30%) on VM1
@@ -294,6 +317,9 @@ run_scenario "run5-disconnect" "protopulse" "${VM2}" "--mode disconnect"
 run_scenario "run6-packetloss-heavy" "baseline"   "${VM1}" "--mode packet-loss --rate 30"
 run_scenario "run6-packetloss-heavy" "ebpf"       "${VM1}" "--mode packet-loss --rate 30"
 run_scenario "run6-packetloss-heavy" "protopulse" "${VM1}" "--mode packet-loss --rate 30"
+run_scenario "run6-packetloss-heavy" "baseline"   "${VM1}" "--mode packet-loss --rate 30" "keepalive"
+run_scenario "run6-packetloss-heavy" "ebpf"       "${VM1}" "--mode packet-loss --rate 30" "keepalive"
+run_scenario "run6-packetloss-heavy" "protopulse" "${VM1}" "--mode packet-loss --rate 30" "keepalive"
 
 log ""
 log "=== All runs complete. Results in: ${RESULTS_DIR} ==="
