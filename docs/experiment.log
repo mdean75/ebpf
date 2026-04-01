@@ -1,0 +1,423 @@
+[01:27:53.202] === Pre-experiment checks ===
+[01:27:53.204] Checking VM 0 kernel version...
+[01:27:53.584]   VM 0 kernel: 5.15.0-173-generic
+[01:27:53.587] Checking service-b health endpoints...
+[01:27:53.604]   192.168.40.180: ok
+[01:27:53.620]   192.168.40.152: ok
+[01:27:53.622] Checking eBPF agent on VM 0...
+[01:27:54.047] Pre-experiment checks passed
+[01:27:54.056] 
+[01:27:54.058] === run1-baseline (mode=baseline, dead-detection=heartbeat, target=none) ===
+[01:27:54.934] service-a started on VM 0
+[01:27:59.940] t=0: recording started
+[01:28:59.951] t=60: stopping
+[01:29:01.426]   metrics: TOTALS sent=13277 lost=0 rerouted=0 dropped=0
+[01:29:02.069] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run1-baseline-baseline/service-a.log
+[01:29:02.075] 
+[01:29:02.079] === run1-baseline (mode=ebpf, dead-detection=heartbeat, target=none) ===
+[01:29:02.968] service-a started on VM 0
+[01:29:07.974] t=0: recording started
+[01:30:07.985] t=60: stopping
+[01:30:08.958]   metrics: TOTALS sent=13177 lost=0 rerouted=0 dropped=0
+[01:30:09.725] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run1-baseline-ebpf/service-a.log
+[01:30:09.731] 
+[01:30:09.735] === run1-baseline (mode=protopulse, dead-detection=heartbeat, target=none) ===
+[01:30:10.649] service-a started on VM 0
+[01:30:15.654] t=0: recording started
+[01:31:15.665] t=60: stopping
+[01:31:16.761]   metrics: TOTALS sent=13203 lost=0 rerouted=0 dropped=0
+[01:31:17.515] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run1-baseline-protopulse/service-a.log
+[01:31:17.521] 
+[01:31:17.525] === run1-baseline (mode=baseline, dead-detection=keepalive, target=none) ===
+[01:31:18.424] service-a started on VM 0
+[01:31:23.430] t=0: recording started
+[01:32:23.440] t=60: stopping
+[01:32:24.514]   metrics: TOTALS sent=13200 lost=0 rerouted=0 dropped=0
+[01:32:25.173] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run1-baseline-baseline-keepalive/service-a.log
+[01:32:25.180] 
+[01:32:25.183] === run1-baseline (mode=ebpf, dead-detection=keepalive, target=none) ===
+[01:32:26.076] service-a started on VM 0
+[01:32:31.082] t=0: recording started
+[01:33:31.094] t=60: stopping
+[01:33:32.078]   metrics: TOTALS sent=13178 lost=0 rerouted=0 dropped=0
+[01:33:33.227] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run1-baseline-ebpf-keepalive/service-a.log
+[01:33:33.232] 
+[01:33:33.235] === run1-baseline (mode=protopulse, dead-detection=keepalive, target=none) ===
+[01:33:34.108] service-a started on VM 0
+[01:33:39.115] t=0: recording started
+[01:34:39.125] t=60: stopping
+[01:34:40.474]   metrics: TOTALS sent=13254 lost=0 rerouted=0 dropped=0
+[01:34:41.231] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run1-baseline-protopulse-keepalive/service-a.log
+[01:34:41.237] 
+[01:34:41.240] === run2-packetloss (mode=baseline, dead-detection=heartbeat, target=192.168.40.180) ===
+[01:34:42.141] service-a started on VM 0
+[01:34:47.147] t=0: recording started
+[01:34:57.735] t=10: injecting fault on 192.168.40.180 via vnet13: --mode packet-loss --rate 5
+[01:36:29.759] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:36:49.783] t=60: stopping
+[01:36:50.918]   metrics: TOTALS sent=25709 lost=0 rerouted=0 dropped=0
+[01:36:51.683] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run2-packetloss-baseline/service-a.log
+[01:36:51.690] 
+[01:36:51.694] === run2-packetloss (mode=ebpf, dead-detection=heartbeat, target=192.168.40.180) ===
+[01:36:52.590] service-a started on VM 0
+[01:36:57.595] t=0: recording started
+[01:37:08.187] t=10: injecting fault on 192.168.40.180 via vnet13: --mode packet-loss --rate 5
+[01:37:38.784] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:37:58.811] t=60: stopping
+[01:38:00.085]   metrics: TOTALS sent=13469 lost=0 rerouted=7516 dropped=0
+[01:38:00.906] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run2-packetloss-ebpf/service-a.log
+[01:38:00.912] 
+[01:38:00.914] === run2-packetloss (mode=protopulse, dead-detection=heartbeat, target=192.168.40.180) ===
+[01:38:01.851] service-a started on VM 0
+[01:38:06.858] t=0: recording started
+[01:38:17.453] t=10: injecting fault on 192.168.40.180 via vnet13: --mode packet-loss --rate 5
+[01:38:48.080] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:39:08.104] t=60: stopping
+[01:39:09.311]   metrics: TOTALS sent=13466 lost=0 rerouted=120 dropped=0
+[01:39:10.169] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run2-packetloss-protopulse/service-a.log
+[01:39:10.176] 
+[01:39:10.179] === run2-packetloss (mode=baseline, dead-detection=keepalive, target=192.168.40.180) ===
+[01:39:11.052] service-a started on VM 0
+[01:39:16.059] t=0: recording started
+[01:39:26.626] t=10: injecting fault on 192.168.40.180 via vnet13: --mode packet-loss --rate 5
+[01:39:57.186] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:40:17.207] t=60: stopping
+[01:40:18.883]   metrics: TOTALS sent=13522 lost=0 rerouted=0 dropped=0
+[01:40:19.655] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run2-packetloss-baseline-keepalive/service-a.log
+[01:40:19.661] 
+[01:40:19.666] === run2-packetloss (mode=ebpf, dead-detection=keepalive, target=192.168.40.180) ===
+[01:40:20.559] service-a started on VM 0
+[01:40:25.565] t=0: recording started
+[01:40:36.157] t=10: injecting fault on 192.168.40.180 via vnet13: --mode packet-loss --rate 5
+[01:41:06.754] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:41:26.779] t=60: stopping
+[01:41:27.695]   metrics: TOTALS sent=13406 lost=0 rerouted=6860 dropped=0
+[01:41:28.429] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run2-packetloss-ebpf-keepalive/service-a.log
+[01:41:28.434] 
+[01:41:28.438] === run2-packetloss (mode=protopulse, dead-detection=keepalive, target=192.168.40.180) ===
+[01:41:29.311] service-a started on VM 0
+[01:41:34.316] t=0: recording started
+[01:41:44.884] t=10: injecting fault on 192.168.40.180 via vnet13: --mode packet-loss --rate 5
+[01:42:15.488] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:42:35.515] t=60: stopping
+[01:42:36.455]   metrics: TOTALS sent=13388 lost=0 rerouted=0 dropped=0
+[01:42:37.079] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run2-packetloss-protopulse-keepalive/service-a.log
+[01:42:37.085] 
+[01:42:37.088] === run3-latency (mode=baseline, dead-detection=heartbeat, target=192.168.40.180) ===
+[01:42:37.961] service-a started on VM 0
+[01:42:42.967] t=0: recording started
+[01:42:53.553] t=10: injecting fault on 192.168.40.180 via vnet13: --mode latency --delay 200ms --jitter 50ms
+[01:43:24.222] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:43:44.249] t=60: stopping
+[01:43:45.222]   metrics: TOTALS sent=13431 lost=0 rerouted=0 dropped=0
+[01:43:45.959] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run3-latency-baseline/service-a.log
+[01:43:45.966] 
+[01:43:45.969] === run3-latency (mode=ebpf, dead-detection=heartbeat, target=192.168.40.180) ===
+[01:43:46.860] service-a started on VM 0
+[01:43:51.867] t=0: recording started
+[01:44:02.431] t=10: injecting fault on 192.168.40.180 via vnet13: --mode latency --delay 200ms --jitter 50ms
+[01:44:33.007] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:44:53.032] t=60: stopping
+[01:44:54.037]   metrics: TOTALS sent=13420 lost=0 rerouted=10292 dropped=0
+[01:44:54.688] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run3-latency-ebpf/service-a.log
+[01:44:54.693] 
+[01:44:54.696] === run3-latency (mode=protopulse, dead-detection=heartbeat, target=192.168.40.180) ===
+[01:44:55.565] service-a started on VM 0
+[01:45:00.571] t=0: recording started
+[01:45:11.175] t=10: injecting fault on 192.168.40.180 via vnet13: --mode latency --delay 200ms --jitter 50ms
+[01:45:41.779] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:46:01.805] t=60: stopping
+[01:46:02.759]   metrics: TOTALS sent=13425 lost=0 rerouted=0 dropped=0
+[01:46:03.583] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run3-latency-protopulse/service-a.log
+[01:46:03.589] 
+[01:46:03.592] === run3-latency (mode=baseline, dead-detection=keepalive, target=192.168.40.180) ===
+[01:46:04.484] service-a started on VM 0
+[01:46:09.490] t=0: recording started
+[01:46:20.077] t=10: injecting fault on 192.168.40.180 via vnet13: --mode latency --delay 200ms --jitter 50ms
+[01:46:50.702] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:47:10.730] t=60: stopping
+[01:47:11.587]   metrics: TOTALS sent=13404 lost=0 rerouted=0 dropped=0
+[01:47:12.248] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run3-latency-baseline-keepalive/service-a.log
+[01:47:12.253] 
+[01:47:12.256] === run3-latency (mode=ebpf, dead-detection=keepalive, target=192.168.40.180) ===
+[01:47:13.144] service-a started on VM 0
+[01:47:18.151] t=0: recording started
+[01:47:28.738] t=10: injecting fault on 192.168.40.180 via vnet13: --mode latency --delay 200ms --jitter 50ms
+[01:47:59.332] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:48:19.362] t=60: stopping
+[01:48:20.316]   metrics: TOTALS sent=13418 lost=0 rerouted=6943 dropped=0
+[01:48:21.151] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run3-latency-ebpf-keepalive/service-a.log
+[01:48:21.159] 
+[01:48:21.162] === run3-latency (mode=protopulse, dead-detection=keepalive, target=192.168.40.180) ===
+[01:48:22.054] service-a started on VM 0
+[01:48:27.061] t=0: recording started
+[01:48:37.625] t=10: injecting fault on 192.168.40.180 via vnet13: --mode latency --delay 200ms --jitter 50ms
+[01:49:08.213] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:49:28.239] t=60: stopping
+[01:49:29.269]   metrics: TOTALS sent=13419 lost=0 rerouted=120 dropped=0
+[01:49:29.896] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run3-latency-protopulse-keepalive/service-a.log
+[01:49:29.902] 
+[01:49:29.906] === run4-disconnect (mode=baseline, dead-detection=heartbeat, target=192.168.40.180) ===
+[01:49:30.795] service-a started on VM 0
+[01:49:35.802] t=0: recording started
+[01:49:46.368] t=10: injecting fault on 192.168.40.180 via vnet13: --mode disconnect
+[01:50:16.981] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:50:37.008] t=60: stopping
+[01:50:37.942]   metrics: TOTALS sent=13403 lost=242 rerouted=9809 dropped=0
+[01:50:38.695] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run4-disconnect-baseline/service-a.log
+[01:50:38.701] 
+[01:50:38.704] === run4-disconnect (mode=ebpf, dead-detection=heartbeat, target=192.168.40.180) ===
+[01:50:39.563] service-a started on VM 0
+[01:50:44.569] t=0: recording started
+[01:50:55.169] t=10: injecting fault on 192.168.40.180 via vnet13: --mode disconnect
+[01:51:25.792] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:51:45.819] t=60: stopping
+[01:51:46.779]   metrics: TOTALS sent=13419 lost=6 rerouted=10291 dropped=0
+[01:51:47.588] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run4-disconnect-ebpf/service-a.log
+[01:51:47.594] 
+[01:51:47.597] === run4-disconnect (mode=protopulse, dead-detection=heartbeat, target=192.168.40.180) ===
+[01:51:48.491] service-a started on VM 0
+[01:51:53.498] t=0: recording started
+[01:52:04.115] t=10: injecting fault on 192.168.40.180 via vnet13: --mode disconnect
+[01:52:34.749] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:52:54.775] t=60: stopping
+[01:52:55.823]   metrics: TOTALS sent=13438 lost=76 rerouted=10164 dropped=0
+[01:52:56.547] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run4-disconnect-protopulse/service-a.log
+[01:52:56.554] 
+[01:52:56.558] === run4-disconnect (mode=baseline, dead-detection=keepalive, target=192.168.40.180) ===
+[01:52:57.431] service-a started on VM 0
+[01:53:02.438] t=0: recording started
+[01:53:13.014] t=10: injecting fault on 192.168.40.180 via vnet13: --mode disconnect
+[01:53:43.631] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:54:03.655] t=60: stopping
+[01:54:04.628]   metrics: TOTALS sent=13418 lost=423 rerouted=5836 dropped=0
+[01:54:05.288] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run4-disconnect-baseline-keepalive/service-a.log
+[01:54:05.295] 
+[01:54:05.299] === run4-disconnect (mode=ebpf, dead-detection=keepalive, target=192.168.40.180) ===
+[01:54:06.200] service-a started on VM 0
+[01:54:11.207] t=0: recording started
+[01:54:21.792] t=10: injecting fault on 192.168.40.180 via vnet13: --mode disconnect
+[01:54:52.355] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:55:12.384] t=60: stopping
+[01:55:13.719]   metrics: TOTALS sent=13480 lost=6 rerouted=10352 dropped=0
+[01:55:14.492] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run4-disconnect-ebpf-keepalive/service-a.log
+[01:55:14.497] 
+[01:55:14.500] === run4-disconnect (mode=protopulse, dead-detection=keepalive, target=192.168.40.180) ===
+[01:55:15.401] service-a started on VM 0
+[01:55:20.408] t=0: recording started
+[01:55:31.012] t=10: injecting fault on 192.168.40.180 via vnet13: --mode disconnect
+[01:56:01.619] t=40: clearing fault on 192.168.40.180 via vnet13
+[01:56:21.647] t=60: stopping
+[01:56:22.529]   metrics: TOTALS sent=13404 lost=59 rerouted=6041 dropped=0
+[01:56:23.170] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run4-disconnect-protopulse-keepalive/service-a.log
+[01:56:23.176] 
+[01:56:23.178] === run5-packetloss (mode=ebpf, dead-detection=heartbeat, target=192.168.40.152) ===
+[01:56:24.072] service-a started on VM 0
+[01:56:29.078] t=0: recording started
+[01:56:39.758] t=10: injecting fault on 192.168.40.152 via vnet14: --mode packet-loss --rate 5
+[01:57:10.463] t=40: clearing fault on 192.168.40.152 via vnet14
+[01:57:30.488] t=60: stopping
+[01:57:31.431]   metrics: TOTALS sent=13447 lost=0 rerouted=7254 dropped=0
+[01:57:32.152] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run5-packetloss-ebpf/service-a.log
+[01:57:32.158] 
+[01:57:32.163] === run5-packetloss (mode=protopulse, dead-detection=heartbeat, target=192.168.40.152) ===
+[01:57:33.060] service-a started on VM 0
+[01:57:38.067] t=0: recording started
+[01:57:48.731] t=10: injecting fault on 192.168.40.152 via vnet14: --mode packet-loss --rate 5
+[01:58:19.455] t=40: clearing fault on 192.168.40.152 via vnet14
+[01:58:39.484] t=60: stopping
+[01:58:40.460]   metrics: TOTALS sent=13455 lost=0 rerouted=0 dropped=0
+[01:58:41.089] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run5-packetloss-protopulse/service-a.log
+[01:58:41.094] 
+[01:58:41.097] === run5-latency (mode=ebpf, dead-detection=heartbeat, target=192.168.40.152) ===
+[01:58:41.990] service-a started on VM 0
+[01:58:46.996] t=0: recording started
+[01:58:57.669] t=10: injecting fault on 192.168.40.152 via vnet14: --mode latency --delay 200ms --jitter 50ms
+[01:59:28.372] t=40: clearing fault on 192.168.40.152 via vnet14
+[01:59:48.403] t=60: stopping
+[01:59:49.652]   metrics: TOTALS sent=13515 lost=0 rerouted=10366 dropped=0
+[01:59:50.436] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run5-latency-ebpf/service-a.log
+[01:59:50.442] 
+[01:59:50.445] === run5-latency (mode=protopulse, dead-detection=heartbeat, target=192.168.40.152) ===
+[01:59:51.335] service-a started on VM 0
+[01:59:56.342] t=0: recording started
+[02:00:06.998] t=10: injecting fault on 192.168.40.152 via vnet14: --mode latency --delay 200ms --jitter 50ms
+[02:00:37.755] t=40: clearing fault on 192.168.40.152 via vnet14
+[02:00:57.783] t=60: stopping
+[02:00:58.731]   metrics: TOTALS sent=13465 lost=0 rerouted=280 dropped=0
+[02:00:59.540] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run5-latency-protopulse/service-a.log
+[02:00:59.545] 
+[02:00:59.548] === run5-disconnect (mode=ebpf, dead-detection=heartbeat, target=192.168.40.152) ===
+[02:01:00.439] service-a started on VM 0
+[02:01:05.445] t=0: recording started
+[02:01:16.110] t=10: injecting fault on 192.168.40.152 via vnet14: --mode disconnect
+[02:01:46.808] t=40: clearing fault on 192.168.40.152 via vnet14
+[02:02:06.831] t=60: stopping
+[02:02:07.748]   metrics: TOTALS sent=13438 lost=6 rerouted=10293 dropped=0
+[02:02:08.628] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run5-disconnect-ebpf/service-a.log
+[02:02:08.634] 
+[02:02:08.638] === run5-disconnect (mode=protopulse, dead-detection=heartbeat, target=192.168.40.152) ===
+[02:02:09.527] service-a started on VM 0
+[02:02:14.533] t=0: recording started
+[02:02:25.197] t=10: injecting fault on 192.168.40.152 via vnet14: --mode disconnect
+[02:02:55.889] t=40: clearing fault on 192.168.40.152 via vnet14
+[02:03:15.914] t=60: stopping
+[02:03:16.968]   metrics: TOTALS sent=13468 lost=73 rerouted=10189 dropped=0
+[02:03:17.865] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run5-disconnect-protopulse/service-a.log
+[02:03:17.871] 
+[02:03:17.875] === run5-packetloss (mode=ebpf, dead-detection=keepalive, target=192.168.40.152) ===
+[02:03:18.752] service-a started on VM 0
+[02:03:23.759] t=0: recording started
+[02:03:34.472] t=10: injecting fault on 192.168.40.152 via vnet14: --mode packet-loss --rate 5
+[02:04:05.211] t=40: clearing fault on 192.168.40.152 via vnet14
+[02:04:25.236] t=60: stopping
+[02:04:26.153]   metrics: TOTALS sent=13462 lost=0 rerouted=6388 dropped=0
+[02:04:26.904] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run5-packetloss-ebpf-keepalive/service-a.log
+[02:04:26.911] 
+[02:04:26.914] === run5-packetloss (mode=protopulse, dead-detection=keepalive, target=192.168.40.152) ===
+[02:04:27.800] service-a started on VM 0
+[02:04:32.805] t=0: recording started
+[02:04:43.478] t=10: injecting fault on 192.168.40.152 via vnet14: --mode packet-loss --rate 5
+[02:05:14.167] t=40: clearing fault on 192.168.40.152 via vnet14
+[02:05:34.191] t=60: stopping
+[02:05:35.122]   metrics: TOTALS sent=13450 lost=0 rerouted=0 dropped=0
+[02:05:35.852] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run5-packetloss-protopulse-keepalive/service-a.log
+[02:05:35.859] 
+[02:05:35.862] === run5-latency (mode=ebpf, dead-detection=keepalive, target=192.168.40.152) ===
+[02:05:36.756] service-a started on VM 0
+[02:05:41.762] t=0: recording started
+[02:05:52.415] t=10: injecting fault on 192.168.40.152 via vnet14: --mode latency --delay 200ms --jitter 50ms
+[02:06:23.133] t=40: clearing fault on 192.168.40.152 via vnet14
+[02:06:43.159] t=60: stopping
+[02:06:44.092]   metrics: TOTALS sent=13448 lost=0 rerouted=7041 dropped=0
+[02:06:44.737] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run5-latency-ebpf-keepalive/service-a.log
+[02:06:44.743] 
+[02:06:44.747] === run5-latency (mode=protopulse, dead-detection=keepalive, target=192.168.40.152) ===
+[02:06:45.640] service-a started on VM 0
+[02:06:50.647] t=0: recording started
+[02:07:01.332] t=10: injecting fault on 192.168.40.152 via vnet14: --mode latency --delay 200ms --jitter 50ms
+[02:07:32.021] t=40: clearing fault on 192.168.40.152 via vnet14
+[02:07:52.048] t=60: stopping
+[02:07:52.910]   metrics: TOTALS sent=13434 lost=0 rerouted=0 dropped=0
+[02:07:53.526] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run5-latency-protopulse-keepalive/service-a.log
+[02:07:53.533] 
+[02:07:53.537] === run5-disconnect (mode=ebpf, dead-detection=keepalive, target=192.168.40.152) ===
+[02:07:54.449] service-a started on VM 0
+[02:07:59.455] t=0: recording started
+[02:08:10.176] t=10: injecting fault on 192.168.40.152 via vnet14: --mode disconnect
+[02:08:40.891] t=40: clearing fault on 192.168.40.152 via vnet14
+[02:09:00.919] t=60: stopping
+[02:09:02.191]   metrics: TOTALS sent=13529 lost=6 rerouted=10372 dropped=0
+[02:09:02.992] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run5-disconnect-ebpf-keepalive/service-a.log
+[02:09:02.998] 
+[02:09:03.000] === run5-disconnect (mode=protopulse, dead-detection=keepalive, target=192.168.40.152) ===
+[02:09:03.890] service-a started on VM 0
+[02:09:08.895] t=0: recording started
+[02:09:19.564] t=10: injecting fault on 192.168.40.152 via vnet14: --mode disconnect
+[02:09:50.229] t=40: clearing fault on 192.168.40.152 via vnet14
+[02:10:10.254] t=60: stopping
+[02:10:11.148]   metrics: TOTALS sent=13434 lost=73 rerouted=6088 dropped=0
+[02:10:11.875] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run5-disconnect-protopulse-keepalive/service-a.log
+[02:10:11.882] 
+[02:10:11.886] === run6-packetloss-heavy (mode=baseline, dead-detection=heartbeat, target=192.168.40.180) ===
+[02:10:12.790] service-a started on VM 0
+[02:10:17.796] t=0: recording started
+[02:10:28.409] t=10: injecting fault on 192.168.40.180 via vnet13: --mode packet-loss --rate 30
+[02:10:59.023] t=40: clearing fault on 192.168.40.180 via vnet13
+[02:11:19.051] t=60: stopping
+[02:11:19.917]   metrics: TOTALS sent=13397 lost=21 rerouted=7799 dropped=0
+[02:11:20.579] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run6-packetloss-heavy-baseline/service-a.log
+[02:11:20.586] 
+[02:11:20.590] === run6-packetloss-heavy (mode=ebpf, dead-detection=heartbeat, target=192.168.40.180) ===
+[02:11:21.501] service-a started on VM 0
+[02:11:26.507] t=0: recording started
+[02:11:37.112] t=10: injecting fault on 192.168.40.180 via vnet13: --mode packet-loss --rate 30
+[02:12:07.749] t=40: clearing fault on 192.168.40.180 via vnet13
+[02:12:27.776] t=60: stopping
+[02:12:28.719]   metrics: TOTALS sent=13425 lost=0 rerouted=10249 dropped=0
+[02:12:29.528] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run6-packetloss-heavy-ebpf/service-a.log
+[02:12:29.532] 
+[02:12:29.534] === run6-packetloss-heavy (mode=protopulse, dead-detection=heartbeat, target=192.168.40.180) ===
+[02:12:30.453] service-a started on VM 0
+[02:12:35.459] t=0: recording started
+[02:12:46.048] t=10: injecting fault on 192.168.40.180 via vnet13: --mode packet-loss --rate 30
+[02:13:16.676] t=40: clearing fault on 192.168.40.180 via vnet13
+[02:13:36.698] t=60: stopping
+[02:13:37.738]   metrics: TOTALS sent=13439 lost=0 rerouted=2675 dropped=0
+[02:13:38.421] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run6-packetloss-heavy-protopulse/service-a.log
+[02:13:38.427] 
+[02:13:38.431] === run6-packetloss-heavy (mode=baseline, dead-detection=keepalive, target=192.168.40.180) ===
+[02:13:39.325] service-a started on VM 0
+[02:13:44.332] t=0: recording started
+[02:13:54.902] t=10: injecting fault on 192.168.40.180 via vnet13: --mode packet-loss --rate 30
+[02:14:25.514] t=40: clearing fault on 192.168.40.180 via vnet13
+[02:14:45.537] t=60: stopping
+[02:14:46.410]   metrics: TOTALS sent=13396 lost=386 rerouted=0 dropped=0
+[02:14:47.032] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run6-packetloss-heavy-baseline-keepalive/service-a.log
+[02:14:47.039] 
+[02:14:47.043] === run6-packetloss-heavy (mode=ebpf, dead-detection=keepalive, target=192.168.40.180) ===
+[02:14:47.951] service-a started on VM 0
+[02:14:52.959] t=0: recording started
+[02:15:03.551] t=10: injecting fault on 192.168.40.180 via vnet13: --mode packet-loss --rate 30
+[02:15:34.163] t=40: clearing fault on 192.168.40.180 via vnet13
+[02:15:54.191] t=60: stopping
+[02:15:55.177]   metrics: TOTALS sent=13413 lost=0 rerouted=10277 dropped=0
+[02:15:56.039] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run6-packetloss-heavy-ebpf-keepalive/service-a.log
+[02:15:56.047] 
+[02:15:56.050] === run6-packetloss-heavy (mode=protopulse, dead-detection=keepalive, target=192.168.40.180) ===
+[02:15:56.924] service-a started on VM 0
+[02:16:01.930] t=0: recording started
+[02:16:12.526] t=10: injecting fault on 192.168.40.180 via vnet13: --mode packet-loss --rate 30
+[02:16:43.090] t=40: clearing fault on 192.168.40.180 via vnet13
+[02:17:03.112] t=60: stopping
+[02:17:04.126]   metrics: TOTALS sent=13402 lost=67 rerouted=3834 dropped=0
+[02:17:04.831] Run complete. Logs: /home/mdeangelo/projects/ebpf/results/20260401-012753/run6-packetloss-heavy-protopulse-keepalive/service-a.log
+[02:17:04.835] 
+[02:17:04.838] === All runs complete. Results in: /home/mdeangelo/projects/ebpf/results/20260401-012753 ===
+[02:17:04.840] Run ./scripts/collect-results.sh to gather Prometheus metrics.
+[02:17:04.845] 
+[02:17:04.848] === Per-run metrics summary ===
+run                                     sent     lost   rerouted  dropped
+---                                     ----     ----   --------  -------
+run1-baseline-baseline-keepalive           13200        0          0        0
+run1-baseline-baseline                     13277        0          0        0
+run1-baseline-ebpf-keepalive               13178        0          0        0
+run1-baseline-ebpf                         13177        0          0        0
+run1-baseline-protopulse-keepalive         13254        0          0        0
+run1-baseline-protopulse                   13203        0          0        0
+run2-packetloss-baseline-keepalive         13522        0          0        0
+run2-packetloss-baseline                   25709        0          0        0
+run2-packetloss-ebpf-keepalive             13406        0       6860        0
+run2-packetloss-ebpf                       13469        0       7516        0
+run2-packetloss-protopulse-keepalive       13388        0          0        0
+run2-packetloss-protopulse                 13466        0        120        0
+run3-latency-baseline-keepalive            13404        0          0        0
+run3-latency-baseline                      13431        0          0        0
+run3-latency-ebpf-keepalive                13418        0       6943        0
+run3-latency-ebpf                          13420        0      10292        0
+run3-latency-protopulse-keepalive          13419        0        120        0
+run3-latency-protopulse                    13425        0          0        0
+run4-disconnect-baseline-keepalive         13418      423       5836        0
+run4-disconnect-baseline                   13403      242       9809        0
+run4-disconnect-ebpf-keepalive             13480        6      10352        0
+run4-disconnect-ebpf                       13419        6      10291        0
+run4-disconnect-protopulse-keepalive       13404       59       6041        0
+run4-disconnect-protopulse                 13438       76      10164        0
+run5-disconnect-ebpf-keepalive             13529        6      10372        0
+run5-disconnect-ebpf                       13438        6      10293        0
+run5-disconnect-protopulse-keepalive       13434       73       6088        0
+run5-disconnect-protopulse                 13468       73      10189        0
+run5-latency-ebpf-keepalive                13448        0       7041        0
+run5-latency-ebpf                          13515        0      10366        0
+run5-latency-protopulse-keepalive          13434        0          0        0
+run5-latency-protopulse                    13465        0        280        0
+run5-packetloss-ebpf-keepalive             13462        0       6388        0
+run5-packetloss-ebpf                       13447        0       7254        0
+run5-packetloss-protopulse-keepalive       13450        0          0        0
+run5-packetloss-protopulse                 13455        0          0        0
+run6-packetloss-heavy-baseline-keepalive   13396      386          0        0
+run6-packetloss-heavy-baseline             13397       21       7799        0
+run6-packetloss-heavy-ebpf-keepalive       13413        0      10277        0
+run6-packetloss-heavy-ebpf                 13425        0      10249        0
+run6-packetloss-heavy-protopulse-keepalive 13402       67       3834        0
+run6-packetloss-heavy-protopulse           13439        0       2675        0
