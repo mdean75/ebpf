@@ -41,8 +41,19 @@ func New(bal *balancer.Balancer, clients []StreamClient, pollInterval time.Durat
 	cfg.AlertPolicy = nethealth.AlertPolicy{
 		CooldownSeconds: 0, // fire on every transition for fast detection
 	}
-	// Use default balanced thresholds and EMA smoothing.
-	// Hysteresis: 3 consecutive confirmations before escalation/recovery.
+	// Tuned thresholds for low-volume gRPC streams (256-byte messages at 200 msg/s).
+	// Default retrans thresholds (soft=2, hard=10) require ~7 retransmits for WARNING,
+	// which takes ~25s via TCP exponential backoff — far slower than heartbeat (2.4s).
+	// Lowered to detect the 2nd retransmit (~600ms after disconnect).
+	// SendQ soft=2KB fires quickly when the TCP window fills under loss/latency.
+	// AlphaRetrans=0.8 makes the EMA fast-reacting; EscalateAfter=1 removes hysteresis.
+	cfg.Scoring.Thresholds = nethealth.ScoreThresholds{
+		Retrans: nethealth.MetricThreshold{Soft: 0, Hard: 3},
+		SendQ:   nethealth.MetricThreshold{Soft: 2 * 1024, Hard: 16 * 1024},
+		Unacked: nethealth.MetricThreshold{Soft: 50, Hard: 200},
+	}
+	cfg.Scoring.EMA.AlphaRetrans = 0.8
+	cfg.Scoring.Stability.EscalateAfter = 1
 
 	mon := nethealth.NewMonitor(cfg, 64)
 
