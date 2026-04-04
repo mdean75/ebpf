@@ -63,9 +63,10 @@ type HealthEvent struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Daddr  string  `protobuf:"bytes,1,opt,name=daddr,proto3" json:"daddr,omitempty"`   // destination IP (VM address as seen by eBPF)
-	Score  float64 `protobuf:"fixed64,2,opt,name=score,proto3" json:"score,omitempty"` // health score at time of transition (0=healthy, 1=dead)
-	Status string  `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"` // "healthy" or "degraded"
+	Daddr       string  `protobuf:"bytes,1,opt,name=daddr,proto3" json:"daddr,omitempty"`                                              // destination IP (VM address as seen by eBPF)
+	Score       float64 `protobuf:"fixed64,2,opt,name=score,proto3" json:"score,omitempty"`                                            // risk score at time of transition (0-100; higher = worse)
+	Status      string  `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`                                            // "healthy" or "degraded" — backward compat
+	ActionLevel string  `protobuf:"bytes,4,opt,name=action_level,json=actionLevel,proto3" json:"action_level,omitempty"`              // HEALTHY/WARNING/SICK/CRITICAL/DEAD; run make generate on KVM host for full wire support
 }
 
 func (x *HealthEvent) Reset() {
@@ -117,6 +118,13 @@ func (x *HealthEvent) GetScore() float64 {
 func (x *HealthEvent) GetStatus() string {
 	if x != nil {
 		return x.Status
+	}
+	return ""
+}
+
+func (x *HealthEvent) GetActionLevel() string {
+	if x != nil {
+		return x.ActionLevel
 	}
 	return ""
 }

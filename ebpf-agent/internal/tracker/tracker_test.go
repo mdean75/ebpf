@@ -7,127 +7,198 @@ import (
 
 var testKey = ConnKey{Saddr: 0x0101010a, Daddr: 0x0a010101, Sport: 12345, Dport: 443}
 
-func TestRecord_Retransmit_IncrementsScore(t *testing.T) {
-	tr := New()
+// cfg returns a TrackerConfig with tight thresholds for deterministic testing.
+// EscalateAfter=1 so a single worsening observation triggers a state change immediately.
+func testCfg() TrackerConfig {
+	cfg := DefaultTrackerConfig()
+	cfg.EscalateAfter = 1
+	cfg.RecoverAfter = 1
+	return cfg
+}
+
+func TestRecord_Retransmit_UpdatesCount(t *testing.T) {
+	tr := New(testCfg())
 	tr.Record(ConnEvent{Key: testKey, EventType: EventRetransmit})
 
 	h := tr.Get(testKey)
 	if h == nil {
 		t.Fatal("expected connection to be tracked")
 	}
-	if h.Score != 0.1 {
-		t.Errorf("expected score=0.1 after one retransmit, got %.3f", h.Score)
-	}
-	if h.RetransmitCount != 1 {
-		t.Errorf("expected RetransmitCount=1, got %d", h.RetransmitCount)
+	if h.RetransCount != 1 {
+		t.Errorf("expected RetransCount=1, got %.0f", h.RetransCount)
 	}
 }
 
-func TestRecord_RTO_IncrementsScore(t *testing.T) {
-	tr := New()
+func TestRecord_Unacked_SetsPacketsOut(t *testing.T) {
+	tr := New(testCfg())
+	tr.Record(ConnEvent{Key: testKey, EventType: EventUnacked, RetransCount: 10})
+
+	h := tr.Get(testKey)
+	if h == nil {
+		t.Fatal("expected connection to be tracked")
+	}
+	if h.PacketsOut != 10 {
+		t.Errorf("expected PacketsOut=10, got %.0f", h.PacketsOut)
+	}
+}
+
+func TestRecord_RTO_UpdatesCount(t *testing.T) {
+	tr := New(testCfg())
 	tr.Record(ConnEvent{Key: testKey, EventType: EventRTO})
 
 	h := tr.Get(testKey)
-	if h.Score != 0.3 {
-		t.Errorf("expected score=0.3 after one RTO, got %.3f", h.Score)
+	if h.RTOCount != 1 {
+		t.Errorf("expected RTOCount=1, got %.0f", h.RTOCount)
 	}
 }
 
-func TestRecord_RTTSpike_IncrementsScore(t *testing.T) {
-	tr := New()
+func TestRecord_RTTSpike_UpdatesCount(t *testing.T) {
+	tr := New(testCfg())
 	tr.Record(ConnEvent{Key: testKey, EventType: EventRTTSpike})
 
 	h := tr.Get(testKey)
-	if h.Score != 0.1 {
-		t.Errorf("expected score=0.1 after one RTT spike, got %.3f", h.Score)
-	}
-	if h.RTTSpikeCount != 1 {
-		t.Errorf("expected RTTSpikeCount=1, got %d", h.RTTSpikeCount)
+	if h.SpikeCount != 1 {
+		t.Errorf("expected SpikeCount=1, got %.0f", h.SpikeCount)
 	}
 }
 
-func TestRecord_ScoreClampedAt1(t *testing.T) {
-	tr := New()
-	// 4 RTOs = 4 * 0.3 = 1.2 → clamped to 1.0
-	for range 4 {
-		tr.Record(ConnEvent{Key: testKey, EventType: EventRTO})
-	}
+func TestRiskScore_BelowSoftThreshold_StaysHealthy(t *testing.T) {
+	tr := New(testCfg())
+	// Retrans soft=2: one retransmit (count=1) stays below soft — score stays low.
+	tr.Record(ConnEvent{Key: testKey, EventType: EventRetransmit})
+
 	h := tr.Get(testKey)
-	if h.Score != 1.0 {
-		t.Errorf("expected score clamped at 1.0, got %.3f", h.Score)
+	if h.Action != ActionHealthy {
+		t.Errorf("expected HEALTHY with retrans=1 (below soft=2), got %s (risk=%.1f)", h.Action, h.RiskScore)
 	}
 }
 
-func TestRecord_ScoreNotBelowZero(t *testing.T) {
-	tr := New()
-	// Score starts at 0; decay should not go negative
-	tr.Decay()
-	tr.Decay()
-	all := tr.All()
-	for _, h := range all {
-		if h.Score < 0 {
-			t.Errorf("score went negative: %.3f", h.Score)
+func TestRiskScore_AboveHardThreshold_DegradesFast(t *testing.T) {
+	cfg := testCfg()
+	// Unacked hard=20: fire enough unacked events to saturate the metric.
+	tr := New(cfg)
+	for range 5 {
+		tr.Record(ConnEvent{Key: testKey, EventType: EventUnacked, RetransCount: 25}) // > hard threshold
+	}
+
+	h := tr.Get(testKey)
+	if h.Action == ActionHealthy {
+		t.Errorf("expected degraded with packets_out=25 (above hard=20), got HEALTHY (risk=%.1f)", h.RiskScore)
+	}
+}
+
+func TestStatus_BackwardCompat(t *testing.T) {
+	h := &ConnectionHealth{Action: ActionHealthy}
+	if h.Status() != "healthy" {
+		t.Errorf("expected 'healthy', got %q", h.Status())
+	}
+	h.Action = ActionSick
+	if h.Status() != "degraded" {
+		t.Errorf("expected 'degraded' for SICK, got %q", h.Status())
+	}
+	h.Action = ActionWarning
+	if h.Status() != "degraded" {
+		t.Errorf("expected 'degraded' for WARNING, got %q", h.Status())
+	}
+}
+
+func TestHysteresis_EscalateAfter3(t *testing.T) {
+	cfg := DefaultTrackerConfig()
+	cfg.EscalateAfter = 3 // explicit: test streak behavior independent of default
+	tr := New(cfg)
+
+	// Saturate unacked well above hard threshold on every event.
+	// With EscalateAfter=3, need 3 consecutive worsening observations.
+	for i := range 3 {
+		tr.Record(ConnEvent{Key: testKey, EventType: EventUnacked, RetransCount: 255})
+		h := tr.Get(testKey)
+		if i < 2 && h.Action != ActionHealthy {
+			t.Errorf("observation %d: expected HEALTHY (streak not yet met), got %s", i+1, h.Action)
 		}
 	}
-}
-
-func TestStatus_DegradedAbove0_5(t *testing.T) {
-	tr := New()
-	// 2 RTOs = 0.6 > 0.5 → degraded
-	tr.Record(ConnEvent{Key: testKey, EventType: EventRTO})
-	tr.Record(ConnEvent{Key: testKey, EventType: EventRTO})
-
 	h := tr.Get(testKey)
-	if h.Status() != "degraded" {
-		t.Errorf("expected 'degraded' with score=%.2f, got %q", h.Score, h.Status())
+	if h.Action == ActionHealthy {
+		t.Errorf("after 3 worsening observations, expected escalation past HEALTHY, got %s", h.Action)
 	}
 }
 
-func TestStatus_HealthyBelow0_5(t *testing.T) {
-	tr := New()
-	tr.Record(ConnEvent{Key: testKey, EventType: EventRetransmit}) // score = 0.1
+func TestHysteresis_RecoveryAfter3(t *testing.T) {
+	cfg := DefaultTrackerConfig() // RecoverAfter=3
+	// EscalateAfter=1 to quickly enter degraded; AlphaUnacked=1.0 so EMA tracks raw
+	// value immediately — isolates the hysteresis streak logic from EMA lag.
+	cfg.EscalateAfter = 1
+	cfg.AlphaUnacked = 1.0
+	tr := New(cfg)
 
+	// Push into degraded state.
+	tr.Record(ConnEvent{Key: testKey, EventType: EventUnacked, RetransCount: 255})
 	h := tr.Get(testKey)
-	if h.Status() != "healthy" {
-		t.Errorf("expected 'healthy' with score=%.2f, got %q", h.Score, h.Status())
+	if h.Action == ActionHealthy {
+		t.Fatal("expected degraded state after saturated unacked event")
+	}
+
+	// Send 3 observations with packets_out=0 — EMA drops immediately to 0.
+	// Streak must reach RecoverAfter=3 before action changes.
+	for i := range 3 {
+		tr.Record(ConnEvent{Key: testKey, EventType: EventUnacked, RetransCount: 0})
+		h = tr.Get(testKey)
+		if i < 2 && h.Action == ActionHealthy {
+			t.Errorf("observation %d: recovered too early (RecoverAfter=3)", i+1)
+		}
+	}
+	h = tr.Get(testKey)
+	if h.Action != ActionHealthy {
+		t.Errorf("after 3 improving observations, expected HEALTHY, got %s (risk=%.1f)", h.Action, h.RiskScore)
 	}
 }
 
-func TestDecay_ReducesScore(t *testing.T) {
-	tr := New()
-	tr.Record(ConnEvent{Key: testKey, EventType: EventRTO}) // score = 0.3
+func TestInactivityDecay_ReducesRisk(t *testing.T) {
+	cfg := testCfg()
+	cfg.InactivitySeconds = 1 // 1s for fast test
+	cfg.DecayFactor = 0.50    // 50% per interval
+	tr := New(cfg)
 
-	// Force a non-trivial elapsed time by manipulating lastDecay
-	tr.lastDecay = time.Now().Add(-2 * time.Second) // 2s ago
-	tr.Decay()
-
+	// Push some risk in.
+	tr.Record(ConnEvent{Key: testKey, EventType: EventUnacked, RetransCount: 25})
 	h := tr.Get(testKey)
-	// After 2s decay at 0.05/s: 0.3 - 0.10 = 0.20 (approximately)
-	if h.Score >= 0.3 {
-		t.Errorf("expected score to decrease from 0.3, got %.3f", h.Score)
+	riskBefore := h.RiskScore
+
+	// Manually backdating LastActivity simulates idle time.
+	tr.mu.Lock()
+	conn := tr.conns[testKey]
+	conn.LastActivity = time.Now().Add(-5 * time.Second)
+	tr.mu.Unlock()
+
+	tr.Prune()
+	h = tr.Get(testKey)
+	if h == nil {
+		// Entry may have been pruned if risk hit zero — that's also valid decay behavior.
+		return
 	}
-	if h.Score < 0 {
-		t.Errorf("score went negative: %.3f", h.Score)
+	if h.RiskScore >= riskBefore {
+		t.Errorf("expected risk to decrease via inactivity decay: before=%.1f after=%.1f", riskBefore, h.RiskScore)
 	}
 }
 
-func TestDecay_ScoreReachesZero(t *testing.T) {
-	tr := New()
-	tr.Record(ConnEvent{Key: testKey, EventType: EventRetransmit}) // score = 0.1
+func TestPrune_RemovesStaleConnections(t *testing.T) {
+	tr := New(testCfg())
+	tr.Record(ConnEvent{Key: testKey, EventType: EventRetransmit})
 
-	// Simulate 10s of decay — score should reach 0, entry should be pruned.
-	tr.lastDecay = time.Now().Add(-10 * time.Second)
-	tr.Decay()
+	// Backdate UpdatedAt past the 15s stale threshold.
+	tr.mu.Lock()
+	tr.conns[testKey].UpdatedAt = time.Now().Add(-20 * time.Second)
+	tr.mu.Unlock()
 
-	// A fully-decayed, healthy entry is removed from the tracker immediately.
+	tr.Prune()
+
 	h := tr.Get(testKey)
-	if h != nil && h.Score != 0 {
-		t.Errorf("expected score=0 or pruned entry after sufficient decay, got %.3f", h.Score)
+	if h != nil {
+		t.Error("expected stale connection to be pruned")
 	}
 }
 
 func TestAll_ReturnsSnapshot(t *testing.T) {
-	tr := New()
+	tr := New(testCfg())
 	k1 := ConnKey{Saddr: 1, Daddr: 2, Sport: 100, Dport: 443}
 	k2 := ConnKey{Saddr: 3, Daddr: 4, Sport: 200, Dport: 443}
 
@@ -137,6 +208,71 @@ func TestAll_ReturnsSnapshot(t *testing.T) {
 	all := tr.All()
 	if len(all) != 2 {
 		t.Errorf("expected 2 connections, got %d", len(all))
+	}
+}
+
+func TestNormalizeRamp(t *testing.T) {
+	cases := []struct {
+		value, soft, hard float64
+		want              float64
+	}{
+		{0, 5, 20, 0},    // below soft
+		{5, 5, 20, 0},    // at soft
+		{12.5, 5, 20, 50}, // midpoint → 50
+		{20, 5, 20, 100}, // at hard
+		{30, 5, 20, 100}, // above hard → clamped
+	}
+	for _, c := range cases {
+		got := normalizeRamp(c.value, c.soft, c.hard)
+		if got != c.want {
+			t.Errorf("normalizeRamp(%.1f, %.1f, %.1f) = %.1f, want %.1f", c.value, c.soft, c.hard, got, c.want)
+		}
+	}
+}
+
+func TestActionFromRisk(t *testing.T) {
+	cfg := DefaultTrackerConfig()
+	cases := []struct {
+		risk float64
+		want ActionLevel
+	}{
+		{0, ActionHealthy},
+		{20, ActionHealthy},
+		{21, ActionWarning},
+		{50, ActionWarning},
+		{51, ActionSick},
+		{80, ActionSick},
+		{81, ActionCritical},
+		{99, ActionCritical},
+		{100, ActionDead},
+	}
+	for _, c := range cases {
+		got := actionFromRisk(c.risk, cfg)
+		if got != c.want {
+			t.Errorf("actionFromRisk(%.0f) = %s, want %s", c.risk, got, c.want)
+		}
+	}
+}
+
+func TestHealthTransition_EmittedOnActionChange(t *testing.T) {
+	cfg := testCfg() // EscalateAfter=1 for immediate escalation
+	tr := New(cfg)
+
+	// Fire enough unacked events to trigger degradation.
+	for range 3 {
+		tr.Record(ConnEvent{Key: testKey, EventType: EventUnacked, RetransCount: 255})
+	}
+
+	select {
+	case ev := <-tr.Events():
+		if ev.Status == "healthy" {
+			t.Errorf("expected degraded transition, got status=%q action=%s", ev.Status, ev.ActionLevel)
+		}
+		if ev.ActionLevel == "" {
+			t.Error("ActionLevel should be populated in HealthTransition")
+		}
+	default:
+		t.Error("expected a HealthTransition event on the channel")
 	}
 }
 

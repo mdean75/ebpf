@@ -37,16 +37,16 @@ func main() {
 	}
 	defer progs.Close()
 
-	t := tracker.New()
+	t := tracker.New(loadTrackerConfig())
 
-	// Score decay + Prometheus sync every 100ms
+	// Stale pruning + inactivity decay + Prometheus sync every 100ms
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 		for range ticker.C {
-			t.Decay()
+			t.Prune()
 			for _, h := range t.All() {
-				agentmetrics.ConnectionScore.WithLabelValues(connLabels(h.Key)...).Set(h.Score)
+				agentmetrics.ConnectionScore.WithLabelValues(connLabels(h.Key)...).Set(h.RiskScore)
 			}
 		}
 	}()
@@ -118,6 +118,84 @@ func loadConfig() loader.Config {
 		UnackedThreshold: thresh,
 		CgroupPath:       detectCgroupPath(),
 	}
+}
+
+// loadTrackerConfig builds a TrackerConfig from environment variables,
+// falling back to defaults that mirror nethealth's DefaultThresholds.
+//
+// Preset: TRACKER_PRESET=default|conservative|high_throughput loads a bundle.
+// Individual vars override the preset (all optional).
+//
+// Threshold vars (float): UNACKED_SOFT, UNACKED_HARD, RETRANS_SOFT, RETRANS_HARD,
+//
+//	SPIKES_SOFT, SPIKES_HARD, RTO_SOFT, RTO_HARD
+//
+// Weight vars (float, must sum to 1.0): WEIGHT_UNACKED, WEIGHT_RETRANS, WEIGHT_SPIKES, WEIGHT_RTO
+// EMA alpha vars (float 0-1): ALPHA_UNACKED, ALPHA_RETRANS, ALPHA_SPIKES, ALPHA_RTO
+// Hysteresis vars (int): ESCALATE_AFTER, RECOVER_AFTER
+// Decay vars (float): INACTIVITY_SECONDS, DECAY_FACTOR
+// Band vars (float): WARN_ABOVE, SICK_ABOVE, CRIT_ABOVE
+func loadTrackerConfig() tracker.TrackerConfig {
+	cfg := tracker.DefaultTrackerConfig()
+
+	switch os.Getenv("TRACKER_PRESET") {
+	case "conservative":
+		cfg.Unacked = tracker.MetricThreshold{Soft: 3, Hard: 10}
+		cfg.Retrans = tracker.MetricThreshold{Soft: 1, Hard: 5}
+		cfg.Spikes = tracker.MetricThreshold{Soft: 1, Hard: 3}
+		cfg.RTO = tracker.MetricThreshold{Soft: 1, Hard: 2}
+	case "high_throughput":
+		cfg.Unacked = tracker.MetricThreshold{Soft: 20, Hard: 100}
+		cfg.Retrans = tracker.MetricThreshold{Soft: 5, Hard: 50}
+		cfg.Spikes = tracker.MetricThreshold{Soft: 3, Hard: 10}
+		cfg.RTO = tracker.MetricThreshold{Soft: 2, Hard: 8}
+	}
+
+	overrideFloat := func(dst *float64, env string) {
+		if v := os.Getenv(env); v != "" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				*dst = f
+			}
+		}
+	}
+	overrideInt := func(dst *int, env string) {
+		if v := os.Getenv(env); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				*dst = n
+			}
+		}
+	}
+
+	overrideFloat(&cfg.Unacked.Soft, "UNACKED_SOFT")
+	overrideFloat(&cfg.Unacked.Hard, "UNACKED_HARD")
+	overrideFloat(&cfg.Retrans.Soft, "RETRANS_SOFT")
+	overrideFloat(&cfg.Retrans.Hard, "RETRANS_HARD")
+	overrideFloat(&cfg.Spikes.Soft, "SPIKES_SOFT")
+	overrideFloat(&cfg.Spikes.Hard, "SPIKES_HARD")
+	overrideFloat(&cfg.RTO.Soft, "RTO_SOFT")
+	overrideFloat(&cfg.RTO.Hard, "RTO_HARD")
+
+	overrideFloat(&cfg.UnackedWeight, "WEIGHT_UNACKED")
+	overrideFloat(&cfg.RetransWeight, "WEIGHT_RETRANS")
+	overrideFloat(&cfg.SpikesWeight, "WEIGHT_SPIKES")
+	overrideFloat(&cfg.RTOWeight, "WEIGHT_RTO")
+
+	overrideFloat(&cfg.AlphaUnacked, "ALPHA_UNACKED")
+	overrideFloat(&cfg.AlphaRetrans, "ALPHA_RETRANS")
+	overrideFloat(&cfg.AlphaSpikes, "ALPHA_SPIKES")
+	overrideFloat(&cfg.AlphaRTO, "ALPHA_RTO")
+
+	overrideInt(&cfg.EscalateAfter, "ESCALATE_AFTER")
+	overrideInt(&cfg.RecoverAfter, "RECOVER_AFTER")
+
+	overrideFloat(&cfg.InactivitySeconds, "INACTIVITY_SECONDS")
+	overrideFloat(&cfg.DecayFactor, "DECAY_FACTOR")
+
+	overrideFloat(&cfg.WarnAbove, "WARN_ABOVE")
+	overrideFloat(&cfg.SickAbove, "SICK_ABOVE")
+	overrideFloat(&cfg.CritAbove, "CRIT_ABOVE")
+
+	return cfg
 }
 
 // detectCgroupPath returns the cgroupv2 path for sockops attachment.

@@ -4,6 +4,7 @@ package tracker
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"net"
 	"sync"
 	"time"
@@ -12,10 +13,22 @@ import (
 // HealthTransition is emitted when a connection's health state changes.
 // Sent on the channel returned by Tracker.Events().
 type HealthTransition struct {
-	DaddrIP string
-	Score   float64
-	Status  string // "healthy" or "degraded"
+	DaddrIP     string
+	Score       float64
+	Status      string      // "healthy" or "degraded" — backward compat for service-a
+	ActionLevel ActionLevel // HEALTHY/WARNING/SICK/CRITICAL/DEAD
 }
+
+// ActionLevel mirrors nethealth's ActionLevel type for like-for-like comparison.
+type ActionLevel string
+
+const (
+	ActionHealthy  ActionLevel = "HEALTHY"
+	ActionWarning  ActionLevel = "WARNING"
+	ActionSick     ActionLevel = "SICK"
+	ActionCritical ActionLevel = "CRITICAL"
+	ActionDead     ActionLevel = "DEAD"
+)
 
 // EventType mirrors the C constants in common.h.
 type EventType uint8
@@ -61,60 +74,134 @@ type ConnEvent struct {
 	RetransCount uint8
 }
 
+// MetricThreshold defines soft and hard boundaries for a metric,
+// matching nethealth's MetricThreshold type.
+type MetricThreshold struct {
+	Soft float64
+	Hard float64
+}
+
+// TrackerConfig holds all configurable scoring parameters, aligned with
+// nethealth's MonitorConfig shape to enable like-for-like comparison.
+type TrackerConfig struct {
+	// Soft/hard thresholds for each signal.
+	// Unacked uses packet counts (packets_out from kernel), unlike nethealth's bytes.
+	Unacked MetricThreshold // packets_out; default {Soft:5, Hard:20}
+	Retrans MetricThreshold // cumulative retransmit count; default {Soft:2, Hard:10}
+	Spikes  MetricThreshold // cumulative RTT spike count; default {Soft:1, Hard:5}
+	RTO     MetricThreshold // cumulative RTO count; default {Soft:1, Hard:3}
+
+	// Metric weights — must sum to 1.0.
+	// No SendQ or TCP-state signal in eBPF agent; weight redistributed to RTT/RTO.
+	UnackedWeight float64 // default 0.35
+	RetransWeight float64 // default 0.35
+	SpikesWeight  float64 // default 0.20
+	RTOWeight     float64 // default 0.10
+
+	// EMA smoothing alphas — higher = faster response to new data.
+	AlphaUnacked float64 // default 0.4
+	AlphaRetrans float64 // default 0.5
+	AlphaSpikes  float64 // default 0.4
+	AlphaRTO     float64 // default 0.4
+
+	// Hysteresis: consecutive worsening/improving observations to change action level.
+	EscalateAfter int // default 3
+	RecoverAfter  int // default 3
+
+	// Inactivity decay: after InactivitySeconds idle, risk is multiplied by
+	// DecayFactor for each InactivitySeconds interval elapsed.
+	InactivitySeconds float64 // default 10
+	DecayFactor       float64 // default 0.90
+
+	// Action band boundaries on the 0-100 risk scale (matches nethealth defaults).
+	WarnAbove float64 // default 20
+	SickAbove float64 // default 50
+	CritAbove float64 // default 80
+}
+
+// DefaultTrackerConfig returns a TrackerConfig with defaults that mirror
+// nethealth's DefaultThresholds for the signals that overlap.
+func DefaultTrackerConfig() TrackerConfig {
+	return TrackerConfig{
+		Unacked: MetricThreshold{Soft: 5, Hard: 20},
+		Retrans: MetricThreshold{Soft: 0, Hard: 3},  // matches protopulse: fires on first retransmit
+		Spikes:  MetricThreshold{Soft: 1, Hard: 5},
+		RTO:     MetricThreshold{Soft: 1, Hard: 3},
+
+		UnackedWeight: 0.35,
+		RetransWeight: 0.35,
+		SpikesWeight:  0.20,
+		RTOWeight:     0.10,
+
+		AlphaUnacked: 0.4,
+		AlphaRetrans: 0.8, // matches protopulse: fast EMA response to retransmits
+		AlphaSpikes:  0.4,
+		AlphaRTO:     0.4,
+
+		EscalateAfter: 1, // matches protopulse: escalate on first threshold crossing
+		RecoverAfter:  3,
+
+		InactivitySeconds: 10,
+		DecayFactor:       0.90,
+
+		WarnAbove: 20,
+		SickAbove: 50,
+		CritAbove: 80,
+	}
+}
+
 // ConnectionHealth tracks the inferred health state of one TCP connection.
 type ConnectionHealth struct {
-	Key             ConnKey
-	RetransmitCount uint32
-	LastRetransmit  time.Time
-	LastRTO         time.Time
-	RTTSpikeCount   uint32
-	Score           float64 // 0.0 (healthy) → 1.0 (dead)
-	// Degraded uses hysteresis: set when Score crosses above 0.5,
-	// cleared only when Score falls below 0.25. This prevents rapid
-	// healthy↔degraded oscillation when the score hovers near the threshold.
-	Degraded  bool
-	UpdatedAt time.Time
+	Key ConnKey
+
+	// Raw metric values — latest snapshot or accumulated count.
+	PacketsOut   float64 // latest packets_out from EVENT_UNACKED (reused retrans_count field)
+	RetransCount float64 // accumulated EVENT_RETRANSMIT events
+	SpikeCount   float64 // accumulated EVENT_RTT_SPIKE events
+	RTOCount     float64 // accumulated EVENT_RTO events
+
+	// EMA-smoothed values (updated on every recomputeScore call).
+	EMAUnacked float64
+	EMARetrans float64
+	EMASpikes  float64
+	EMARTO     float64
+
+	// Scoring state.
+	RiskScore      float64     // 0-100; higher = worse (matches nethealth's RiskScore scale)
+	Action         ActionLevel // current action level post-hysteresis
+	EscalateStreak int         // consecutive worsening observations
+	RecoverStreak  int         // consecutive improving observations
+
+	// Timing.
+	LastActivity time.Time
+	UpdatedAt    time.Time
+
+	firstObs bool // true until first recomputeScore call; seeds EMA from raw values
 }
 
+// Status returns "healthy" or "degraded" for backward compatibility
+// with service-a's HealthEvent consumer.
 func (h *ConnectionHealth) Status() string {
-	if h.Degraded {
-		return "degraded"
+	if h.Action == ActionHealthy {
+		return "healthy"
 	}
-	return "healthy"
+	return "degraded"
 }
 
-// Tracker maintains per-connection health state and applies score decay.
+// Tracker maintains per-connection health state.
 type Tracker struct {
-	mu    sync.RWMutex
-	conns map[ConnKey]*ConnectionHealth
-
-	// Score weights, configurable for testing
-	retransmitWeight float64 // added per retransmit event
-	rtoWeight        float64 // added per RTO event
-	rttSpikeWeight   float64 // added per RTT spike event
-	unackedWeight    float64 // added per unacked threshold crossing
-
-	lastDecay time.Time
-
-	events chan HealthTransition // health state change notifications
+	mu     sync.RWMutex
+	conns  map[ConnKey]*ConnectionHealth
+	cfg    TrackerConfig
+	events chan HealthTransition
 }
 
-// New returns a Tracker with the default score weights from the plan:
-//   - retransmit: +0.1
-//   - RTO: +0.3
-//   - RTT spike: +0.1
-//   - unacked threshold crossing: +0.6 (single event immediately crosses the
-//     0.5 degraded threshold — the BPF program fires at most once per crossing
-//     so this weight is intentionally high)
-func New() *Tracker {
+// New returns a Tracker using the provided configuration.
+func New(cfg TrackerConfig) *Tracker {
 	return &Tracker{
-		conns:            make(map[ConnKey]*ConnectionHealth),
-		retransmitWeight: 0.1,
-		rtoWeight:        0.3,
-		rttSpikeWeight:   0.1,
-		unackedWeight:    0.6,
-		lastDecay:        time.Now(),
-		events:           make(chan HealthTransition, 64),
+		conns:  make(map[ConnKey]*ConnectionHealth),
+		cfg:    cfg,
+		events: make(chan HealthTransition, 64),
 	}
 }
 
@@ -124,64 +211,42 @@ func (t *Tracker) Events() <-chan HealthTransition {
 	return t.events
 }
 
-// Record ingests a conn_event and updates the connection's score.
+// Record ingests a conn_event, updates the connection's raw metrics,
+// and recomputes its health score.
 func (t *Tracker) Record(ev ConnEvent) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	now := time.Now()
 	h := t.getOrCreate(ev.Key)
-	h.UpdatedAt = time.Now()
+	h.UpdatedAt = now
 
 	switch ev.EventType {
-	case EventRetransmit:
-		h.RetransmitCount++
-		h.LastRetransmit = h.UpdatedAt
-		h.Score = clamp(h.Score+t.retransmitWeight, 0, 1)
-	case EventRTO:
-		h.LastRTO = h.UpdatedAt
-		h.Score = clamp(h.Score+t.rtoWeight, 0, 1)
-	case EventRTTSpike:
-		h.RTTSpikeCount++
-		h.Score = clamp(h.Score+t.rttSpikeWeight, 0, 1)
 	case EventUnacked:
-		h.Score = clamp(h.Score+t.unackedWeight, 0, 1)
+		// unacked.c repurposes the retrans_count field to carry packets_out (capped at 255).
+		h.PacketsOut = float64(ev.RetransCount)
+		h.LastActivity = now
+	case EventRetransmit:
+		h.RetransCount++
+		h.LastActivity = now
+	case EventRTTSpike:
+		h.SpikeCount++
+		h.LastActivity = now
+	case EventRTO:
+		h.RTOCount++
+		h.LastActivity = now
 	}
-	// Hysteresis: enter degraded at >0.5, only exit at <0.25 (in Decay).
-	if !h.Degraded && h.Score > 0.5 {
-		h.Degraded = true
-		select {
-		case t.events <- HealthTransition{DaddrIP: h.Key.DaddrIP(), Score: h.Score, Status: "degraded"}:
-		default:
-		}
-	}
+
+	t.recomputeAndNotify(h, now)
 }
 
-// Decay applies time-based score decay to all connections.
-// Must be called periodically (e.g. every 100ms).
-//
-// Decay rates (from the plan):
-//   - retransmit contribution: 0.05/second
-//   - RTO contribution: 0.1/second
-//
-// We apply a single composite decay of 0.05/second to the total score.
-// This is a simplification; individual event decay is handled by the score
-// weight system rather than per-event tracking.
-func (t *Tracker) Decay() {
+// Prune removes stale connections and recomputes scores for idle connections
+// so inactivity decay can drive recovery. Call periodically from a ticker goroutine.
+func (t *Tracker) Prune() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	now := time.Now()
-	elapsed := now.Sub(t.lastDecay).Seconds()
-	t.lastDecay = now
-
-	const decayPerSecond = 0.05
-	decay := decayPerSecond * elapsed
-
-	// Prune stale entries: connections not updated in >15s have closed.
-	// 15s is safe at 200 msg/s (events arrive every few ms on an active stream).
-	// Without pruning, old entries from prior runs with the same VM IP but a
-	// different source port linger and cause false positives when service-a
-	// restarts and the poller matches on destination IP across all entries.
 	const staleThreshold = 15 * time.Second
 
 	for key, h := range t.conns {
@@ -189,23 +254,152 @@ func (t *Tracker) Decay() {
 			delete(t.conns, key)
 			continue
 		}
-		if h.Score > 0 {
-			h.Score = clamp(h.Score-decay, 0, 1)
-		}
-		// Clear degraded only when score falls well below the entry threshold (0.5).
-		// The 0.25 gap prevents re-oscillation when score hovers near 0.5.
-		if h.Degraded && h.Score < 0.25 {
-			h.Degraded = false
-			select {
-			case t.events <- HealthTransition{DaddrIP: h.Key.DaddrIP(), Score: h.Score, Status: "healthy"}:
-			default:
-			}
-		}
-		// Prune fully-recovered entries immediately — no need to retain a
-		// score=0 healthy entry; if the connection re-appears it starts fresh.
-		if h.Score == 0 && !h.Degraded {
+		// Recompute on each tick to apply inactivity decay and catch recovery
+		// transitions even when no new events arrive.
+		t.recomputeAndNotify(h, now)
+		if h.RiskScore == 0 && h.Action == ActionHealthy {
 			delete(t.conns, key)
 		}
+	}
+}
+
+// recomputeAndNotify recomputes the connection's score and emits a HealthTransition
+// if the ActionLevel has changed. Must be called with t.mu held.
+func (t *Tracker) recomputeAndNotify(h *ConnectionHealth, now time.Time) {
+	prev := h.Action
+	h.recomputeScore(t.cfg, now)
+	if h.Action == prev {
+		return
+	}
+	status := "degraded"
+	if h.Action == ActionHealthy {
+		status = "healthy"
+	}
+	select {
+	case t.events <- HealthTransition{
+		DaddrIP:     h.Key.DaddrIP(),
+		Score:       h.RiskScore,
+		Status:      status,
+		ActionLevel: h.Action,
+	}:
+	default:
+	}
+}
+
+// recomputeScore applies the nethealth-aligned scoring pipeline:
+// EMA smoothing → normalize → weighted sum → inactivity decay → action bands → hysteresis.
+func (h *ConnectionHealth) recomputeScore(cfg TrackerConfig, now time.Time) {
+	// Seed EMA from raw values on first call so the initial observation registers
+	// immediately rather than being damped by a zero-initialized EMA.
+	if h.firstObs {
+		h.EMAUnacked = h.PacketsOut
+		h.EMARetrans = h.RetransCount
+		h.EMASpikes = h.SpikeCount
+		h.EMARTO = h.RTOCount
+		h.firstObs = false
+	} else {
+		h.EMAUnacked = cfg.AlphaUnacked*h.PacketsOut + (1-cfg.AlphaUnacked)*h.EMAUnacked
+		h.EMARetrans = cfg.AlphaRetrans*h.RetransCount + (1-cfg.AlphaRetrans)*h.EMARetrans
+		h.EMASpikes = cfg.AlphaSpikes*h.SpikeCount + (1-cfg.AlphaSpikes)*h.EMASpikes
+		h.EMARTO = cfg.AlphaRTO*h.RTOCount + (1-cfg.AlphaRTO)*h.EMARTO
+	}
+
+	// Normalize each EMA-smoothed metric to [0, 100] via a linear soft/hard ramp.
+	nUnacked := normalizeRamp(h.EMAUnacked, cfg.Unacked.Soft, cfg.Unacked.Hard)
+	nRetrans := normalizeRamp(h.EMARetrans, cfg.Retrans.Soft, cfg.Retrans.Hard)
+	nSpikes := normalizeRamp(h.EMASpikes, cfg.Spikes.Soft, cfg.Spikes.Hard)
+	nRTO := normalizeRamp(h.EMARTO, cfg.RTO.Soft, cfg.RTO.Hard)
+
+	// Weighted sum → raw risk [0, 100].
+	raw := cfg.UnackedWeight*nUnacked +
+		cfg.RetransWeight*nRetrans +
+		cfg.SpikesWeight*nSpikes +
+		cfg.RTOWeight*nRTO
+
+	// Inactivity decay: reduce risk when the connection has been quiet.
+	// Mirrors nethealth's StabilityConfig.InactivityDecayFactor logic.
+	if !h.LastActivity.IsZero() {
+		idle := now.Sub(h.LastActivity).Seconds()
+		if idle >= cfg.InactivitySeconds {
+			raw *= math.Pow(cfg.DecayFactor, idle/cfg.InactivitySeconds)
+		}
+	}
+
+	h.RiskScore = clamp(raw, 0, 100)
+
+	target := actionFromRisk(h.RiskScore, cfg)
+	h.applyHysteresis(target, cfg)
+}
+
+// normalizeRamp maps value to [0, 100] using a linear ramp between soft and hard.
+// Mirrors nethealth's normalizeRamp function exactly.
+func normalizeRamp(value, soft, hard float64) float64 {
+	if hard <= soft {
+		if value > hard {
+			return 100
+		}
+		return 0
+	}
+	return clamp(100*(value-soft)/(hard-soft), 0, 100)
+}
+
+// actionFromRisk maps a risk score to an ActionLevel using the configured band boundaries.
+func actionFromRisk(risk float64, cfg TrackerConfig) ActionLevel {
+	switch {
+	case risk >= 100:
+		return ActionDead
+	case risk > cfg.CritAbove:
+		return ActionCritical
+	case risk > cfg.SickAbove:
+		return ActionSick
+	case risk > cfg.WarnAbove:
+		return ActionWarning
+	default:
+		return ActionHealthy
+	}
+}
+
+// applyHysteresis updates h.Action using consecutive-observation streak counters.
+// Mirrors nethealth's stability gate logic exactly.
+func (h *ConnectionHealth) applyHysteresis(target ActionLevel, cfg TrackerConfig) {
+	current := actionSeverity(h.Action)
+	tgt := actionSeverity(target)
+
+	switch {
+	case tgt > current:
+		h.EscalateStreak++
+		h.RecoverStreak = 0
+		if h.EscalateStreak >= cfg.EscalateAfter {
+			h.Action = target
+			h.EscalateStreak = 0
+		}
+	case tgt < current:
+		h.RecoverStreak++
+		h.EscalateStreak = 0
+		if h.RecoverStreak >= cfg.RecoverAfter {
+			h.Action = target
+			h.RecoverStreak = 0
+		}
+	default:
+		h.EscalateStreak = 0
+		h.RecoverStreak = 0
+		h.Action = target
+	}
+}
+
+// actionSeverity returns a numeric severity for streak comparison.
+func actionSeverity(a ActionLevel) int {
+	switch a {
+	case ActionDead:
+		return 4
+	case ActionCritical:
+		return 3
+	case ActionSick:
+		return 2
+	case ActionWarning:
+		return 1
+	default:
+		return 0
 	}
 }
 
@@ -237,7 +431,9 @@ func (t *Tracker) getOrCreate(key ConnKey) *ConnectionHealth {
 		return h
 	}
 	h := &ConnectionHealth{
-		Key:       key,
+		Key:      key,
+		Action:   ActionHealthy,
+		firstObs: true,
 		UpdatedAt: time.Now(),
 	}
 	t.conns[key] = h

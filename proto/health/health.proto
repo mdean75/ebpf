@@ -12,7 +12,8 @@ service HealthWatcher {
 message WatchRequest {}
 
 message HealthEvent {
-  string daddr  = 1; // destination IP (VM address as seen by eBPF)
-  double score  = 2; // health score at time of transition (0=healthy, 1=dead)
-  string status = 3; // "healthy" or "degraded"
+  string daddr         = 1; // destination IP (VM address as seen by eBPF)
+  double score         = 2; // risk score at time of transition (0-100; higher = worse)
+  string status        = 3; // "healthy" or "degraded" — backward compat for service-a
+  string action_level  = 4; // HEALTHY/WARNING/SICK/CRITICAL/DEAD — matches nethealth ActionLevel
 }

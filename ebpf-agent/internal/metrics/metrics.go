@@ -28,6 +28,6 @@ var (
 
 	ConnectionScore = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "ebpf_connection_score",
-		Help: "Current health score per connection (0=healthy, 1=dead).",
+		Help: "Current risk score per connection (0=healthy, 100=dead). Matches nethealth's RiskScore scale.",
 	}, []string{"saddr", "daddr", "dport"})
 )

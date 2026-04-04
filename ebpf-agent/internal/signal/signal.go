@@ -20,10 +20,10 @@ type ConnHealthResponse struct {
 		Sport uint16 `json:"sport"`
 		Dport uint16 `json:"dport"`
 	} `json:"conn"`
-	Score     float64 `json:"score"`
-	Status    string  `json:"status"`
-	LastEvent string  `json:"last_event"`
-	UpdatedAt string  `json:"updated_at"`
+	RiskScore   float64 `json:"risk_score"`   // 0-100; higher = worse (matches nethealth scale)
+	Status      string  `json:"status"`        // "healthy" or "degraded" — backward compat
+	ActionLevel string  `json:"action_level"`  // HEALTHY/WARNING/SICK/CRITICAL/DEAD
+	UpdatedAt   string  `json:"updated_at"`
 }
 
 // Server is the HTTP signal API server.
@@ -90,24 +90,11 @@ func toResponse(h tracker.ConnectionHealth) ConnHealthResponse {
 	r.Conn.Daddr = h.Key.DaddrIP()
 	r.Conn.Sport = h.Key.Sport
 	r.Conn.Dport = h.Key.Dport
-	r.Score = h.Score
+	r.RiskScore = h.RiskScore
 	r.Status = h.Status()
-	r.LastEvent = lastEvent(h)
+	r.ActionLevel = string(h.Action)
 	r.UpdatedAt = h.UpdatedAt.Format(time.RFC3339Nano)
 	return r
-}
-
-func lastEvent(h tracker.ConnectionHealth) string {
-	if h.LastRTO.After(h.LastRetransmit) {
-		return "rto"
-	}
-	if !h.LastRetransmit.IsZero() {
-		return "retransmit"
-	}
-	if h.RTTSpikeCount > 0 {
-		return "rtt_spike"
-	}
-	return ""
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

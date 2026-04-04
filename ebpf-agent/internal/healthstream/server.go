@@ -30,9 +30,10 @@ func New(t *tracker.Tracker) *Server {
 func (s *Server) broadcast(events <-chan tracker.HealthTransition) {
 	for ev := range events {
 		pbEv := &pb.HealthEvent{
-			Daddr:  ev.DaddrIP,
-			Score:  ev.Score,
-			Status: ev.Status,
+			Daddr:       ev.DaddrIP,
+			Score:       ev.Score,
+			Status:      ev.Status,
+			ActionLevel: string(ev.ActionLevel),
 		}
 		s.mu.Lock()
 		for ch := range s.subs {
