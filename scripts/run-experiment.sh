@@ -28,8 +28,8 @@ shift 2
 VMS=("$@")
 
 if [[ ${#VMS[@]} -lt 2 ]]; then
-    echo "ERROR: at least 2 service-b VM IPs required"
-    exit 1
+  echo "ERROR: at least 2 service-b VM IPs required"
+  exit 1
 fi
 
 VM1="${VMS[0]}"
@@ -50,28 +50,28 @@ vm_a() { ssh ${SSH_OPTS} "${SSH_USER}@${VM_A}" "$@"; }
 # traffic bypasses the bridge's egress qdisc, same as Docker.
 # Falls back to BRIDGE if the tap cannot be determined.
 get_tap_for_ip() {
-    local target_ip="$1"
-    local vm tap ip source
-    for vm in $(virsh list --name 2>/dev/null); do
-        for source in agent arp lease; do
-            # Check whether the target IP appears anywhere in the output —
-            # don't use head -1 because agent source reports loopback first.
-            if virsh domifaddr "${vm}" --source "${source}" 2>/dev/null \
-                    | awk '/ipv4/{print $4}' | cut -d/ -f1 \
-                    | grep -qx "${target_ip}"; then
-                tap=$(virsh domiflist "${vm}" 2>/dev/null \
-                    | awk '!/^-/ && !/Interface/ && NF>=3 {print $1}' | head -1)
-                if [[ -n "${tap}" ]]; then
-                    echo "${tap}"
-                    return
-                fi
-                break
-            fi
-        done
+  local target_ip="$1"
+  local vm tap ip source
+  for vm in $(virsh list --name 2>/dev/null); do
+    for source in agent arp lease; do
+      # Check whether the target IP appears anywhere in the output —
+      # don't use head -1 because agent source reports loopback first.
+      if virsh domifaddr "${vm}" --source "${source}" 2>/dev/null |
+        awk '/ipv4/{print $4}' | cut -d/ -f1 |
+        grep -qx "${target_ip}"; then
+        tap=$(virsh domiflist "${vm}" 2>/dev/null |
+          awk '!/^-/ && !/Interface/ && NF>=3 {print $1}' | head -1)
+        if [[ -n "${tap}" ]]; then
+          echo "${tap}"
+          return
+        fi
+        break
+      fi
     done
-    # Write warning to stderr so it doesn't pollute the $(...) return value
-    echo "[$(date +%H:%M:%S)] WARN: could not find tap interface for ${target_ip} — falling back to ${BRIDGE} (fault injection may not work)" | tee -a "${RESULTS_DIR}/experiment.log" >&2
-    echo "${BRIDGE}"
+  done
+  # Write warning to stderr so it doesn't pollute the $(...) return value
+  echo "[$(date +%H:%M:%S)] WARN: could not find tap interface for ${target_ip} — falling back to ${BRIDGE} (fault injection may not work)" | tee -a "${RESULTS_DIR}/experiment.log" >&2
+  echo "${BRIDGE}"
 }
 
 # ----------------------------------------------------------------------------
@@ -85,18 +85,18 @@ log "  VM 0 kernel: ${KVER}"
 
 log "Checking service-b health endpoints..."
 for vm in "${VMS[@]}"; do
-    STATUS=$(curl -sf --max-time 3 "http://${vm}:8080/health" || echo "FAIL")
-    log "  ${vm}: ${STATUS}"
-    if [[ "${STATUS}" != "ok" ]]; then
-        log "ERROR: ${vm} health check failed — is service-b running?"
-        exit 1
-    fi
+  STATUS=$(curl -sf --max-time 3 "http://${vm}:8080/health" || echo "FAIL")
+  log "  ${vm}: ${STATUS}"
+  if [[ "${STATUS}" != "ok" ]]; then
+    log "ERROR: ${vm} health check failed — is service-b running?"
+    exit 1
+  fi
 done
 
 log "Checking eBPF agent on VM 0..."
 AGENT_STATUS=$(vm_a curl -sf --max-time 3 "http://localhost:9090/health/all" 2>/dev/null || echo "FAIL")
 if [[ "${AGENT_STATUS}" == "FAIL" ]]; then
-    log "WARNING: eBPF agent not reachable on VM 0 — start it before measuring"
+  log "WARNING: eBPF agent not reachable on VM 0 — start it before measuring"
 fi
 
 log "Pre-experiment checks passed"
@@ -105,13 +105,13 @@ log "Pre-experiment checks passed"
 # Helper: start service-a on VM 0 with the given LB mode
 # ----------------------------------------------------------------------------
 start_service_a() {
-    local MODE="$1"
-    local DEAD_DETECTION="${2:-heartbeat}"
-    # Pipe script via heredoc — avoids the SSH multi-argument quoting issue
-    # where 'ssh host bash -c "..."' passes a newline-prefixed string that
-    # breaks bash's -c argument parsing.
-    # Variables expanded locally (MODE, VM_ADDRESSES, DEAD_DETECTION); remote vars use single backslash.
-    ssh ${SSH_OPTS} "${SSH_USER}@${VM_A}" bash << REMOTE
+  local MODE="$1"
+  local DEAD_DETECTION="${2:-heartbeat}"
+  # Pipe script via heredoc — avoids the SSH multi-argument quoting issue
+  # where 'ssh host bash -c "..."' passes a newline-prefixed string that
+  # breaks bash's -c argument parsing.
+  # Variables expanded locally (MODE, VM_ADDRESSES, DEAD_DETECTION); remote vars use single backslash.
+  ssh ${SSH_OPTS} "${SSH_USER}@${VM_A}" bash <<REMOTE
 pkill -f /usr/local/bin/service-a 2>/dev/null || true
 sleep 0.5
 LB_MODE=${MODE} \
@@ -127,9 +127,9 @@ REMOTE
 }
 
 stop_service_a() {
-    local LOG_DEST="$1"
-    # Single-quoted REMOTE — no local variable expansion needed here
-    ssh ${SSH_OPTS} "${SSH_USER}@${VM_A}" bash << 'REMOTE'
+  local LOG_DEST="$1"
+  # Single-quoted REMOTE — no local variable expansion needed here
+  ssh ${SSH_OPTS} "${SSH_USER}@${VM_A}" bash <<'REMOTE'
 if [[ -f /tmp/service-a.pid ]]; then
     kill $(cat /tmp/service-a.pid) 2>/dev/null || true
     rm -f /tmp/service-a.pid
@@ -140,7 +140,7 @@ for i in $(seq 1 15); do
     sleep 1
 done
 REMOTE
-    scp ${SSH_OPTS} "${SSH_USER}@${VM_A}:/tmp/service-a.log" "${LOG_DEST}" 2>/dev/null || true
+  scp ${SSH_OPTS} "${SSH_USER}@${VM_A}:/tmp/service-a.log" "${LOG_DEST}" 2>/dev/null || true
 }
 
 # ----------------------------------------------------------------------------
@@ -151,20 +151,20 @@ REMOTE
 # run — no diffing needed.
 # ----------------------------------------------------------------------------
 snapshot_metrics() {
-    local RUN_DIR="$1"
-    local prom="${RUN_DIR}/service-a-metrics.prom"
+  local RUN_DIR="$1"
+  local prom="${RUN_DIR}/service-a-metrics.prom"
 
-    vm_a curl -sf --max-time 5 "http://localhost:2112/metrics" > "${prom}" 2>/dev/null || {
-        log "  WARNING: could not fetch service-a metrics — is service-a still running?"
-        return 0
-    }
+  vm_a curl -sf --max-time 5 "http://localhost:2112/metrics" >"${prom}" 2>/dev/null || {
+    log "  WARNING: could not fetch service-a metrics — is service-a still running?"
+    return 0
+  }
 
-    # Single awk pass: no grep pipelines, no pipefail exposure.
-    # split($1, p, "\"") on a label line like:
-    #   service_a_messages_lost_total{addr="1.2.3.4:443",reason="timeout"} 7
-    # yields p[2]=addr value, p[4]=second label value.
-    local summary
-    summary=$(awk '
+  # Single awk pass: no grep pipelines, no pipefail exposure.
+  # split($1, p, "\"") on a label line like:
+  #   service_a_messages_lost_total{addr="1.2.3.4:443",reason="timeout"} 7
+  # yields p[2]=addr value, p[4]=second label value.
+  local summary
+  summary=$(awk '
         /^service_a_messages_sent_total\{/ {
             split($1,p,"\""); addr=p[2]
             printf "  sent          %-30s %d\n", addr, $NF
@@ -191,118 +191,121 @@ snapshot_metrics() {
         END {
             printf "TOTALS sent=%d lost=%d rerouted=%d dropped=%d\n", ts, tl, tr, td+0
         }
-    ' "${prom}") || { log "  WARNING: metrics parse failed"; return 0; }
+    ' "${prom}") || {
+    log "  WARNING: metrics parse failed"
+    return 0
+  }
 
-    echo "${summary}" > "${RUN_DIR}/metrics-summary.txt"
-    local totals
-    totals=$(echo "${summary}" | tail -1)
-    log "  metrics: ${totals}"
+  echo "${summary}" >"${RUN_DIR}/metrics-summary.txt"
+  local totals
+  totals=$(echo "${summary}" | tail -1)
+  log "  metrics: ${totals}"
 }
 
 # ----------------------------------------------------------------------------
 # Helper: run a timed fault scenario
 # ----------------------------------------------------------------------------
 run_scenario() {
-    local RUN_NAME="$1"
-    local LB_MODE="$2"
-    local TARGET_VM="$3"
-    local FAULT_ARGS="${4:-}"
-    local DEAD_DETECTION="${5:-heartbeat}"
-    local SUFFIX=""
-    [[ "${DEAD_DETECTION}" != "heartbeat" ]] && SUFFIX="-${DEAD_DETECTION}"
-    local RUN_DIR="${RESULTS_DIR}/${RUN_NAME}-${LB_MODE}${SUFFIX}"
+  local RUN_NAME="$1"
+  local LB_MODE="$2"
+  local TARGET_VM="$3"
+  local FAULT_ARGS="${4:-}"
+  local DEAD_DETECTION="${5:-heartbeat}"
+  local SUFFIX=""
+  [[ "${DEAD_DETECTION}" != "heartbeat" ]] && SUFFIX="-${DEAD_DETECTION}"
+  local RUN_DIR="${RESULTS_DIR}/${RUN_NAME}-${LB_MODE}${SUFFIX}"
 
-    mkdir -p "${RUN_DIR}"
-    log ""
-    log "=== ${RUN_NAME} (mode=${LB_MODE}, dead-detection=${DEAD_DETECTION}, target=${TARGET_VM:-none}) ==="
+  mkdir -p "${RUN_DIR}"
+  log ""
+  log "=== ${RUN_NAME} (mode=${LB_MODE}, dead-detection=${DEAD_DETECTION}, target=${TARGET_VM:-none}) ==="
 
-    start_service_a "${LB_MODE}" "${DEAD_DETECTION}"
-    log "service-a started on VM 0"
-    sleep 5
+  start_service_a "${LB_MODE}" "${DEAD_DETECTION}"
+  log "service-a started on VM 0"
+  sleep 5
 
-    log "t=0: recording started"
-    sleep 10
+  log "t=0: recording started"
+  sleep 10
 
-    if [[ -n "${FAULT_ARGS}" && -n "${TARGET_VM}" ]]; then
-        local IFACE
-        IFACE=$(get_tap_for_ip "${TARGET_VM}")
-        log "t=10: injecting fault on ${TARGET_VM} via ${IFACE}: ${FAULT_ARGS}"
-        # shellcheck disable=SC2086
-        sudo "${BIN}/fault-injector" inject --iface "${IFACE}" --target "${TARGET_VM}" ${FAULT_ARGS}
-    fi
+  if [[ -n "${FAULT_ARGS}" && -n "${TARGET_VM}" ]]; then
+    local IFACE
+    IFACE=$(get_tap_for_ip "${TARGET_VM}")
+    log "t=10: injecting fault on ${TARGET_VM} via ${IFACE}: ${FAULT_ARGS}"
+    # shellcheck disable=SC2086
+    sudo "${BIN}/fault-injector" inject --iface "${IFACE}" --target "${TARGET_VM}" ${FAULT_ARGS}
+  fi
 
-    sleep 30
+  sleep 30
 
-    if [[ -n "${FAULT_ARGS}" && -n "${TARGET_VM}" ]]; then
-        local IFACE
-        IFACE=$(get_tap_for_ip "${TARGET_VM}")
-        log "t=40: clearing fault on ${TARGET_VM} via ${IFACE}"
-        sudo "${BIN}/fault-injector" clear --iface "${IFACE}" --target "${TARGET_VM}"
-    fi
+  if [[ -n "${FAULT_ARGS}" && -n "${TARGET_VM}" ]]; then
+    local IFACE
+    IFACE=$(get_tap_for_ip "${TARGET_VM}")
+    log "t=40: clearing fault on ${TARGET_VM} via ${IFACE}"
+    sudo "${BIN}/fault-injector" clear --iface "${IFACE}" --target "${TARGET_VM}"
+  fi
 
-    sleep 20
+  sleep 20
 
-    log "t=60: stopping"
-    snapshot_metrics "${RUN_DIR}"
-    stop_service_a "${RUN_DIR}/service-a.log"
-    log "Run complete. Logs: ${RUN_DIR}/service-a.log"
+  log "t=60: stopping"
+  snapshot_metrics "${RUN_DIR}"
+  stop_service_a "${RUN_DIR}/service-a.log"
+  log "Run complete. Logs: ${RUN_DIR}/service-a.log"
 }
 
 # ----------------------------------------------------------------------------
 # Run 1 — Baseline (no faults, all three modes)
 # ----------------------------------------------------------------------------
-run_scenario "run1-baseline" "baseline"   "" ""
-run_scenario "run1-baseline" "ebpf"       "" ""
-run_scenario "run1-baseline" "protopulse" "" ""
-run_scenario "run1-baseline" "baseline"   "" "" "keepalive"
-run_scenario "run1-baseline" "ebpf"       "" "" "keepalive"
-run_scenario "run1-baseline" "protopulse" "" "" "keepalive"
+# run_scenario "run1-baseline" "baseline"   "" ""
+# run_scenario "run1-baseline" "ebpf"       "" ""
+# run_scenario "run1-baseline" "protopulse" "" ""
+# run_scenario "run1-baseline" "baseline"   "" "" "keepalive"
+# run_scenario "run1-baseline" "ebpf"       "" "" "keepalive"
+# run_scenario "run1-baseline" "protopulse" "" "" "keepalive"
 
 # ----------------------------------------------------------------------------
 # Run 2 — Packet loss 5% on VM1 (a service-b VM)
 # ----------------------------------------------------------------------------
-run_scenario "run2-packetloss" "baseline"   "${VM1}" "--mode packet-loss --rate 5"
-run_scenario "run2-packetloss" "ebpf"       "${VM1}" "--mode packet-loss --rate 5"
+run_scenario "run2-packetloss" "baseline" "${VM1}" "--mode packet-loss --rate 5"
+run_scenario "run2-packetloss" "ebpf" "${VM1}" "--mode packet-loss --rate 5"
 run_scenario "run2-packetloss" "protopulse" "${VM1}" "--mode packet-loss --rate 5"
-run_scenario "run2-packetloss" "baseline"   "${VM1}" "--mode packet-loss --rate 5" "keepalive"
-run_scenario "run2-packetloss" "ebpf"       "${VM1}" "--mode packet-loss --rate 5" "keepalive"
-run_scenario "run2-packetloss" "protopulse" "${VM1}" "--mode packet-loss --rate 5" "keepalive"
+# run_scenario "run2-packetloss" "baseline"   "${VM1}" "--mode packet-loss --rate 5" "keepalive"
+# run_scenario "run2-packetloss" "ebpf"       "${VM1}" "--mode packet-loss --rate 5" "keepalive"
+# run_scenario "run2-packetloss" "protopulse" "${VM1}" "--mode packet-loss --rate 5" "keepalive"
 
 # ----------------------------------------------------------------------------
 # Run 3 — Latency spike on VM1
 # ----------------------------------------------------------------------------
-run_scenario "run3-latency" "baseline"   "${VM1}" "--mode latency --delay 200ms --jitter 50ms"
-run_scenario "run3-latency" "ebpf"       "${VM1}" "--mode latency --delay 200ms --jitter 50ms"
+run_scenario "run3-latency" "baseline" "${VM1}" "--mode latency --delay 200ms --jitter 50ms"
+run_scenario "run3-latency" "ebpf" "${VM1}" "--mode latency --delay 200ms --jitter 50ms"
 run_scenario "run3-latency" "protopulse" "${VM1}" "--mode latency --delay 200ms --jitter 50ms"
-run_scenario "run3-latency" "baseline"   "${VM1}" "--mode latency --delay 200ms --jitter 50ms" "keepalive"
-run_scenario "run3-latency" "ebpf"       "${VM1}" "--mode latency --delay 200ms --jitter 50ms" "keepalive"
-run_scenario "run3-latency" "protopulse" "${VM1}" "--mode latency --delay 200ms --jitter 50ms" "keepalive"
+# run_scenario "run3-latency" "baseline"   "${VM1}" "--mode latency --delay 200ms --jitter 50ms" "keepalive"
+# run_scenario "run3-latency" "ebpf"       "${VM1}" "--mode latency --delay 200ms --jitter 50ms" "keepalive"
+# run_scenario "run3-latency" "protopulse" "${VM1}" "--mode latency --delay 200ms --jitter 50ms" "keepalive"
 
 # ----------------------------------------------------------------------------
 # Run 4 — Complete disconnect on VM1
 # ----------------------------------------------------------------------------
-run_scenario "run4-disconnect" "baseline"   "${VM1}" "--mode disconnect"
-run_scenario "run4-disconnect" "ebpf"       "${VM1}" "--mode disconnect"
+run_scenario "run4-disconnect" "baseline" "${VM1}" "--mode disconnect"
+run_scenario "run4-disconnect" "ebpf" "${VM1}" "--mode disconnect"
 run_scenario "run4-disconnect" "protopulse" "${VM1}" "--mode disconnect"
-run_scenario "run4-disconnect" "baseline"   "${VM1}" "--mode disconnect" "keepalive"
-run_scenario "run4-disconnect" "ebpf"       "${VM1}" "--mode disconnect" "keepalive"
-run_scenario "run4-disconnect" "protopulse" "${VM1}" "--mode disconnect" "keepalive"
+# run_scenario "run4-disconnect" "baseline"   "${VM1}" "--mode disconnect" "keepalive"
+# run_scenario "run4-disconnect" "ebpf"       "${VM1}" "--mode disconnect" "keepalive"
+# run_scenario "run4-disconnect" "protopulse" "${VM1}" "--mode disconnect" "keepalive"
 
 # ----------------------------------------------------------------------------
 # Run 5 — Repeat Runs 2–4 on VM2 (confirms results are not VM-specific)
 # ----------------------------------------------------------------------------
-run_scenario "run5-packetloss" "ebpf"       "${VM2}" "--mode packet-loss --rate 5"
-run_scenario "run5-packetloss" "protopulse" "${VM2}" "--mode packet-loss --rate 5"
-run_scenario "run5-latency"    "ebpf"       "${VM2}" "--mode latency --delay 200ms --jitter 50ms"
-run_scenario "run5-latency"    "protopulse" "${VM2}" "--mode latency --delay 200ms --jitter 50ms"
-run_scenario "run5-disconnect" "ebpf"       "${VM2}" "--mode disconnect"
-run_scenario "run5-disconnect" "protopulse" "${VM2}" "--mode disconnect"
-run_scenario "run5-packetloss" "ebpf"       "${VM2}" "--mode packet-loss --rate 5" "keepalive"
-run_scenario "run5-packetloss" "protopulse" "${VM2}" "--mode packet-loss --rate 5" "keepalive"
-run_scenario "run5-latency"    "ebpf"       "${VM2}" "--mode latency --delay 200ms --jitter 50ms" "keepalive"
-run_scenario "run5-latency"    "protopulse" "${VM2}" "--mode latency --delay 200ms --jitter 50ms" "keepalive"
-run_scenario "run5-disconnect" "ebpf"       "${VM2}" "--mode disconnect" "keepalive"
-run_scenario "run5-disconnect" "protopulse" "${VM2}" "--mode disconnect" "keepalive"
+# run_scenario "run5-packetloss" "ebpf"       "${VM2}" "--mode packet-loss --rate 5"
+# run_scenario "run5-packetloss" "protopulse" "${VM2}" "--mode packet-loss --rate 5"
+# run_scenario "run5-latency"    "ebpf"       "${VM2}" "--mode latency --delay 200ms --jitter 50ms"
+# run_scenario "run5-latency"    "protopulse" "${VM2}" "--mode latency --delay 200ms --jitter 50ms"
+# run_scenario "run5-disconnect" "ebpf"       "${VM2}" "--mode disconnect"
+# run_scenario "run5-disconnect" "protopulse" "${VM2}" "--mode disconnect"
+# run_scenario "run5-packetloss" "ebpf"       "${VM2}" "--mode packet-loss --rate 5" "keepalive"
+# run_scenario "run5-packetloss" "protopulse" "${VM2}" "--mode packet-loss --rate 5" "keepalive"
+# run_scenario "run5-latency"    "ebpf"       "${VM2}" "--mode latency --delay 200ms --jitter 50ms" "keepalive"
+# run_scenario "run5-latency"    "protopulse" "${VM2}" "--mode latency --delay 200ms --jitter 50ms" "keepalive"
+# run_scenario "run5-disconnect" "ebpf"       "${VM2}" "--mode disconnect" "keepalive"
+# run_scenario "run5-disconnect" "protopulse" "${VM2}" "--mode disconnect" "keepalive"
 
 # ----------------------------------------------------------------------------
 # Run 6 — Heavy packet loss (30%) on VM1
@@ -314,12 +317,12 @@ run_scenario "run5-disconnect" "protopulse" "${VM2}" "--mode disconnect" "keepal
 # eBPF detects and reroutes within ~500ms, reducing the loss window.
 # Protopulse detects via /proc/net/tcp polling (~600ms minimum with hysteresis).
 # ----------------------------------------------------------------------------
-run_scenario "run6-packetloss-heavy" "baseline"   "${VM1}" "--mode packet-loss --rate 30"
-run_scenario "run6-packetloss-heavy" "ebpf"       "${VM1}" "--mode packet-loss --rate 30"
+run_scenario "run6-packetloss-heavy" "baseline" "${VM1}" "--mode packet-loss --rate 30"
+run_scenario "run6-packetloss-heavy" "ebpf" "${VM1}" "--mode packet-loss --rate 30"
 run_scenario "run6-packetloss-heavy" "protopulse" "${VM1}" "--mode packet-loss --rate 30"
-run_scenario "run6-packetloss-heavy" "baseline"   "${VM1}" "--mode packet-loss --rate 30" "keepalive"
-run_scenario "run6-packetloss-heavy" "ebpf"       "${VM1}" "--mode packet-loss --rate 30" "keepalive"
-run_scenario "run6-packetloss-heavy" "protopulse" "${VM1}" "--mode packet-loss --rate 30" "keepalive"
+# run_scenario "run6-packetloss-heavy" "baseline"   "${VM1}" "--mode packet-loss --rate 30" "keepalive"
+# run_scenario "run6-packetloss-heavy" "ebpf"       "${VM1}" "--mode packet-loss --rate 30" "keepalive"
+# run_scenario "run6-packetloss-heavy" "protopulse" "${VM1}" "--mode packet-loss --rate 30" "keepalive"
 
 log ""
 log "=== All runs complete. Results in: ${RESULTS_DIR} ==="
@@ -328,21 +331,21 @@ log "Run ./scripts/collect-results.sh to gather Prometheus metrics."
 # Print a comparison table across all runs
 log ""
 log "=== Per-run metrics summary ==="
-printf "%-35s %8s %8s %10s %8s\n" "run" "sent" "lost" "rerouted" "dropped" | \
-    tee -a "${RESULTS_DIR}/experiment.log"
-printf "%-35s %8s %8s %10s %8s\n" "---" "----" "----" "--------" "-------" | \
-    tee -a "${RESULTS_DIR}/experiment.log"
+printf "%-35s %8s %8s %10s %8s\n" "run" "sent" "lost" "rerouted" "dropped" |
+  tee -a "${RESULTS_DIR}/experiment.log"
+printf "%-35s %8s %8s %10s %8s\n" "---" "----" "----" "--------" "-------" |
+  tee -a "${RESULTS_DIR}/experiment.log"
 for prom in "${RESULTS_DIR}"/*/service-a-metrics.prom; do
-    [[ -f "${prom}" ]] || continue
-    run=$(basename "$(dirname "${prom}")")
-    read -r sent lost rerouted dropped < <(awk '
+  [[ -f "${prom}" ]] || continue
+  run=$(basename "$(dirname "${prom}")")
+  read -r sent lost rerouted dropped < <(awk '
         /^service_a_messages_sent_total\{/      { ts+=$NF }
         /^service_a_messages_lost_total\{/      { tl+=$NF }
         /^service_a_messages_rerouted_total\{/  { tr+=$NF }
         /^service_a_messages_dropped_total /    { td=$NF  }
         END { print ts+0, tl+0, tr+0, td+0 }
     ' "${prom}")
-    printf "%-35s %8d %8d %10d %8d\n" \
-        "${run}" "${sent}" "${lost}" "${rerouted}" "${dropped}" | \
-        tee -a "${RESULTS_DIR}/experiment.log"
+  printf "%-35s %8d %8d %10d %8d\n" \
+    "${run}" "${sent}" "${lost}" "${rerouted}" "${dropped}" |
+    tee -a "${RESULTS_DIR}/experiment.log"
 done

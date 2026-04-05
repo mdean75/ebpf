@@ -123,8 +123,8 @@ type TrackerConfig struct {
 // nethealth's DefaultThresholds for the signals that overlap.
 func DefaultTrackerConfig() TrackerConfig {
 	return TrackerConfig{
-		Unacked: MetricThreshold{Soft: 5, Hard: 20},
-		Retrans: MetricThreshold{Soft: 0, Hard: 3},  // matches protopulse: fires on first retransmit
+		Unacked: MetricThreshold{Soft: 3, Hard: 20},
+		Retrans: MetricThreshold{Soft: 0, Hard: 3}, // matches protopulse: fires on first retransmit
 		Spikes:  MetricThreshold{Soft: 1, Hard: 5},
 		RTO:     MetricThreshold{Soft: 1, Hard: 3},
 
@@ -431,9 +431,9 @@ func (t *Tracker) getOrCreate(key ConnKey) *ConnectionHealth {
 		return h
 	}
 	h := &ConnectionHealth{
-		Key:      key,
-		Action:   ActionHealthy,
-		firstObs: true,
+		Key:       key,
+		Action:    ActionHealthy,
+		firstObs:  true,
 		UpdatedAt: time.Now(),
 	}
 	t.conns[key] = h
