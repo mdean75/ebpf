@@ -101,6 +101,16 @@ runcmd:
   # The UEK is kernel-uek; both coexist after this step.
   - dnf install -y kernel
 
+  # Regenerate the RHCK initramfs with --host-only so dracut introspects the
+  # running system and includes LVM/device-mapper modules for vg_main/lv_root.
+  # Without this the RPM post-install dracut run occurs before udev fully
+  # enumerates block devices, producing a generic initramfs that can't find
+  # the LVM root — resulting in dracut emergency mode at boot.
+  - |
+    NEW_KVER=$(rpm -q kernel --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' | sort -V | tail -1)
+    dracut --host-only --force "/boot/initramfs-${NEW_KVER}.img" "${NEW_KVER}"
+    echo "initramfs regenerated for RHCK ${NEW_KVER}"
+
   # Set the newly installed RHCK vmlinuz as the grub default.
   - |
     RHCK_VMLINUZ=$(ls -ct /boot/vmlinuz-* 2>/dev/null | grep -v uek | head -1)
