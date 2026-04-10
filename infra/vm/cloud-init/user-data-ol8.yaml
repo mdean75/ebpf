@@ -118,26 +118,34 @@ runcmd:
   # The UEK is kernel-uek; both coexist after this step.
   - dnf install -y kernel
 
-  # Regenerate the RHCK initramfs with --host-only so dracut introspects the
-  # running system and includes LVM/device-mapper modules for vg_main/lv_root.
-  # Without this the RPM post-install dracut run occurs before udev fully
-  # enumerates block devices, producing a generic initramfs that can't find
-  # the LVM root — resulting in dracut emergency mode at boot.
+  # Explicitly include the lvm dracut module for all future initramfs builds.
+  # On OL8 cloud images, dm-mod is built into the UEK kernel (not a loadable
+  # module), so dracut's --host-only mode does not see it in /proc/modules and
+  # omits it from the RHCK initramfs. The RHCK kernel then can't assemble
+  # vg_main at boot and drops to dracut emergency mode. Writing this config
+  # file ensures the lvm module is always explicitly included.
+  - echo 'add_dracutmodules+=" lvm "' > /etc/dracut.conf.d/lvm.conf
+
+  # Regenerate the RHCK initramfs. Do NOT use --host-only; rely on the explicit
+  # lvm.conf above instead.
   - |
     NEW_KVER=$(rpm -q kernel --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' | sort -V | tail -1)
-    dracut --host-only --force "/boot/initramfs-${NEW_KVER}.img" "${NEW_KVER}"
+    dracut -f "/boot/initramfs-${NEW_KVER}.img" "${NEW_KVER}"
     echo "initramfs regenerated for RHCK ${NEW_KVER}"
 
-  # Set the newly installed RHCK vmlinuz as the grub default.
-  # Sort by ctime and pick the newest non-uek entry.
+  # Ensure the RHCK grub entry carries the rd.lvm.lv activation hints.
+  # grubby copies args from the current default when a new kernel is installed,
+  # so these should already be present — this makes it explicit.
   - |
-    RHCK_VMLINUZ=$(ls -ct /boot/vmlinuz-* 2>/dev/null | grep -v uek | head -1)
-    if [[ -n "${RHCK_VMLINUZ}" ]]; then
-      grubby --set-default "${RHCK_VMLINUZ}"
-      echo "RHCK default set to: ${RHCK_VMLINUZ}"
-    else
-      echo "WARNING: no non-uek vmlinuz found under /boot — grub default unchanged"
-    fi
+    NEW_KVER=$(rpm -q kernel --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' | sort -V | tail -1)
+    grubby --update-kernel="/boot/vmlinuz-${NEW_KVER}" \
+      --args="rd.lvm.lv=vg_main/lv_root rd.lvm.lv=vg_main/lv_swap"
+
+  # Set the RHCK vmlinuz as the grub default.
+  - |
+    NEW_KVER=$(rpm -q kernel --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' | sort -V | tail -1)
+    grubby --set-default "/boot/vmlinuz-${NEW_KVER}"
+    echo "RHCK default set to: /boot/vmlinuz-${NEW_KVER}"
 
 # Reboot once so the VM comes up on the RHCK kernel.
 power_state:
